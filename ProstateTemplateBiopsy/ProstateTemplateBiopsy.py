@@ -66,8 +66,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     # ------------------------------------ Initialization UI ---------------------------------------
     # TODO: 
     # - Populate Image List when images are loaded
-    # - Create case folder
-    # - Create DICOM Database folder
     initializeCollapsibleButton = ctk.ctkCollapsibleButton()
     initializeCollapsibleButton.text = "Connection"
     self.layout.addWidget(initializeCollapsibleButton)
@@ -115,16 +113,18 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     # ------------------------------------ Image List UI --------------------------------------
     # TODO: 
     # - Switch images depending on clicking an image (can have a button for it on each row)
-    # - Populate list when images are loaded
     # - Ignore certain images
     imageListCollapsibleButton = ctk.ctkCollapsibleButton()
     imageListCollapsibleButton.text = "Images"
     self.layout.addWidget(imageListCollapsibleButton)
     imageListLayout = qt.QVBoxLayout(imageListCollapsibleButton)
 
+    self.imageRoles = ['N/A', 'CALIBRATION', 'PLANNING', 'CONFIRMATION']
+
     # Image List Table with combo boxes to set role for images
     self.imageListTableWidget = qt.QTableWidget(0, 3)
-    self.imageListTableWidget.setHorizontalHeaderLabels(["Series", "Name", "Acquisition Time", "Image Role"])
+    self.imageListTableWidget.setHorizontalHeaderLabels(["Image Description", "Acquisition Time", "Role"])
+    imageListLayout.addWidget(self.imageListTableWidget)
     # -------------------------------------- ----------  --------------------------------------
 
     # ---------------------------------- Registration UI --------------------------------------
@@ -144,7 +144,10 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
 
 
     # -------------------------------------- ----------  --------------------------------------
-
+    # Add vertical spacer
+    self.layout.addStretch(1)
+    # -------------------------------------- ----------  --------------------------------------
+  
   def select_directory(self):
     directory = qt.QFileDialog.getExistingDirectory(self.parent, "Select Cases Directory")
     if directory:
@@ -202,6 +205,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     # (len(self.loadedFiles) + len(self.filesToBeLoaded)) >= len(currentFileList)
     else:
       if len(self.filesToBeLoaded) > 0:
+        #print(self.filesToBeLoaded)
         self.loadSeries(self.filesToBeLoaded)
         self.loadedFiles += self.filesToBeLoaded
         self.filesToBeLoaded = []
@@ -220,26 +224,50 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.filesToBeLoaded = []
     self.observationTimer.stop()
     
-  @vtk.calldata_type(vtk.VTK_OBJECT)
-  def onNodeAddedEvent(self, caller, event, calldata):
-    newNode = calldata
-    print(newNode.GetName())
-  
   def loadSeries(self, newFilesAdded):
     seriesUIDs = []
     for file in newFilesAdded:
       seriesUIDs.append(StepBasedSession.getDICOMValue(file, '0020,000E'))
-    print(seriesUIDs)
-    DICOMUtils.loadSeriesByUID(seriesUIDs)
+    loadedNodeIDs = DICOMUtils.loadSeriesByUID(seriesUIDs)
+  
+  @vtk.calldata_type(vtk.VTK_OBJECT)
+  def onNodeAddedEvent(self, caller, event, calldata):
+    newNode = calldata
+    if not isinstance(newNode, slicer.vtkMRMLScalarVolumeNode):
+      return
+    if (newNode.GetName() == "CalibrationOutVolume"):
+      return
+    self.addToImageList(newNode)
 
-  # def makeSeriesNumberDescription(self, dcmFile):
-  #   seriesDescription = StepBasedSession.getDICOMValue(dcmFile, DICOMTAGS.SERIES_DESCRIPTION)
-  #   seriesNumber = StepBasedSession.getDICOMValue(dcmFile, DICOMTAGS.SERIES_NUMBER)
-  #   if not (seriesNumber and seriesDescription):
-  #     raise DICOMValueError("Missing Attribute(s):\nFile: {}\nseriesNumber: {}\nseriesDescription: {}"
-  #                           .format(dcmFile, seriesNumber, seriesDescription))
-  #   return "{}: {}".format(seriesNumber, seriesDescription)
-  
-  def updateImageList(self):
-    pass
-  
+  # TODO: Automatically update roles in another function
+  # TODO: Set fixed sizes for table/rows
+  def addToImageList(self, newNode):
+    rowCount = self.imageListTableWidget.rowCount
+
+    imageName = qt.QTableWidgetItem(newNode.GetName())
+    imageTime = qt.QTableWidgetItem(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    imageRoleChoice = qt.QComboBox()
+    imageRoleChoice.addItems(self.imageRoles) # add some options to the combo box
+    imageRoleChoice.currentTextChanged.connect(lambda: self.updateImageListRoles(imageRoleChoice.currentText, rowCount))
+
+    self.imageListTableWidget.insertRow(rowCount)
+    self.imageListTableWidget.setItem(rowCount, 0, imageName)
+    self.imageListTableWidget.setItem(rowCount, 1, imageTime)
+    self.imageListTableWidget.setCellWidget(rowCount, 2, imageRoleChoice) # set the combo box as a cell widget
+
+    self.autoImageRoleAssignment(newNode, imageRoleChoice, rowCount)
+
+  def updateImageListRoles(self, newRoleAssigned, rowCount):
+    if newRoleAssigned in ["CALIBRATION", "PLANNING"]:
+      for index in range(0, self.imageListTableWidget.rowCount):
+        if (index != rowCount) and (newRoleAssigned == (self.imageListTableWidget.cellWidget(index, 2).currentText)):
+          self.imageListTableWidget.cellWidget(index, 2).setCurrentIndex(self.imageRoles.index("N/A"))
+
+  def autoImageRoleAssignment(self, newNode, imageRoleChoice, rowCount):
+    name = newNode.GetName()
+    if "Template" in name:
+      imageRoleChoice.setCurrentIndex(self.imageRoles.index("CALIBRATION"))
+      self.updateImageListRoles(imageRoleChoice.currentText, rowCount)
+    elif "cover" in name:
+      imageRoleChoice.setCurrentIndex(self.imageRoles.index("PLANNING"))
+      self.updateImageListRoles(imageRoleChoice.currentText, rowCount)
