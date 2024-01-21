@@ -1,0 +1,22 @@
+
+Configuration file for Z-frame version z004 - Wider seven fiducial frame
+
+The z004 z-frame model is uniquely defined by the locations of seven
+fiducials and the vectors that describe the diagonals of each face.
+
+(Start point, End point)
+Fiducial 1: ((40,-30,-30), (40,-30,30))
+Fiducial 2: ((40,-30,30), (40,30,-30))
+Fiducial 3: ((40,30,-30), (40,30,30))
+Fiducial 4: ((30,30,30) , (-30,30,-30))
+Fiducial 5: ((-40,30,-30), (-40,30,30))
+Fiducial 6: ((-40,30,30), (-40,-30,-30))
+Fiducial 7: ((-40,-30,-30), (-40,-30,30))
+
+Side 1 origin: (40,30,-30)
+Base origin: (-30,30,-30)
+Side 2 origin: (-40,-30,-30)
+
+Side 1 diagonal: (0, -1, 1)
+Base diagonal: (1, 0, 1)
+Side 2 diagonal: (0, 1, 1)
