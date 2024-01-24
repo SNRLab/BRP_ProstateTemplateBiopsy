@@ -21,6 +21,7 @@ import glob
 import datetime
 import os
 import re
+import math
 import numpy as np
 # pip_install('scikit-image')
 from skimage.draw import line_nd
@@ -69,6 +70,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.removeNodeByName('ZFrameTransform')
     self.ZFrameCalibrationTransformNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", "ZFrameTransform")
     self.increaseThresholdForRepair = False
+    self.increaseThresholdForRetry = False
 
   def setup(self):
     ScriptedLoadableModuleWidget.setup(self)
@@ -157,21 +159,21 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.registrationButton.setFont(registerFont)
     self.registrationButton.toolTip = "Start registration process for Z-Frame"
     self.registrationButton.enabled = True
-    self.registrationButton.connect('clicked()', self.registerZFrame)
+    self.registrationButton.connect('clicked()', self.onRegister)
     registrationLayout.addRow(self.registrationButton)
+
+    self.configFileSelectionBox = qt.QComboBox()
+    self.configFileSelectionBox.addItems(['Z-frame z001', 'Z-frame z002', 'Z-frame z003', 'Z-frame z004'])
+    self.configFileSelectionBox.setCurrentIndex(3)
+    registrationLayout.addRow('ZFrame Configuration:', self.configFileSelectionBox)
 
     registrationParametersGroupBox = ctk.ctkCollapsibleGroupBox()
     registrationParametersGroupBox.title = "Automatic Registration Parameters"
     registrationParametersGroupBox.collapsed = True
     registrationParametersLayout = qt.QFormLayout(registrationParametersGroupBox)
-    registrationLayout.addWidget(registrationParametersGroupBox)
+    registrationLayout.addRow(registrationParametersGroupBox)
 
-    self.configFileSelectionBox = qt.QComboBox()
-    self.configFileSelectionBox.addItems(['Z-frame z001', 'Z-frame z002', 'Z-frame z003', 'Z-frame z004'])
-    self.configFileSelectionBox.setCurrentIndex(3)
-    registrationParametersLayout.addRow('ZFrame Configuration:', self.configFileSelectionBox)
-
-    self.defaultThresholdPercentage = 0.06
+    self.defaultThresholdPercentage = 0.08
     self.thresholdSliderWidget = ctk.ctkSliderWidget()
     self.thresholdSliderWidget.setToolTip("Set range for threshold percentage for isolating registration fiducial markers")
     self.thresholdSliderWidget.setDecimals(2)
@@ -187,7 +189,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.fiducialSizeSliderWidget.maximum = 5000
     self.fiducialSizeSliderWidget.minimum = 0
     self.fiducialSizeSliderWidget.singleStep = 1
-    self.fiducialSizeSliderWidget.maximumValue = 1500
+    self.fiducialSizeSliderWidget.maximumValue = 2000
     self.fiducialSizeSliderWidget.minimumValue = 300
     registrationParametersLayout.addRow("Fiducial Size Range:", self.fiducialSizeSliderWidget)
 
@@ -208,11 +210,15 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.repairFiducialImageCheckBox.setChecked(True)
     registrationParametersLayout.addRow(self.repairFiducialImageCheckBox)
 
+    self.retryFailedRegistrationCheckBox = qt.QCheckBox("Re-attempt registration with different settings upon failure")
+    self.retryFailedRegistrationCheckBox.setChecked(True)
+    registrationParametersLayout.addRow(self.retryFailedRegistrationCheckBox)
+
     self.manualRegistrationGroupBox = ctk.ctkCollapsibleGroupBox()
     self.manualRegistrationGroupBox.title = "Manual Registration"
     self.manualRegistrationGroupBox.collapsed = True
     manualRregistrationLayout = qt.QVBoxLayout(self.manualRegistrationGroupBox)
-    registrationLayout.addWidget(self.manualRegistrationGroupBox)
+    registrationLayout.addRow(self.manualRegistrationGroupBox)
 
     self.manualRegistrationTransformSliders = slicer.qMRMLTransformSliders()
     self.manualRegistrationTransformSliders.setWindowTitle("Translation")
@@ -243,7 +249,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     # Add vertical spacer
     self.layout.addStretch(1)
     # -------------------------------------- ----------  --------------------------------------
-  
+
+
   def select_directory(self):
     directory = qt.QFileDialog.getExistingDirectory(self.parent, "Select Cases Directory")
     if directory:
@@ -388,63 +395,134 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     for index in range(0, self.imageListTableWidget.rowCount):
       if self.imageListTableWidget.cellWidget(index, 2).currentText == imageRole:
         return slicer.mrmlScene.GetFirstNodeByName(self.imageListTableWidget.item(index, 0).text())
-
-  def registerZFrame(self):
-    # If there is a zFrame image selected, perform the calibration step to calculate the CLB matrix
-    #inputVolume = self.tempTemplateSelector.currentNode()
-    inputVolume = self.getNodeFromImageRole("CALIBRATION")
-
-    if not inputVolume:
-      return
-    
-    outputTransform = self.ZFrameCalibrationTransformNode
+  
+  def onRegister(self):
     currentFilePath = os.path.dirname(os.path.realpath(__file__))
+    self.zframeConfig = ""
     if self.configFileSelectionBox.currentText == "Z-frame z001":
       ZFRAME_MODEL_PATH = 'zframe001-model.vtk'
-      zframeConfig = 'z001'
+      self.zframeConfig = 'z001'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/zframe/zframe001.txt")
     elif self.configFileSelectionBox.currentText == "Z-frame z002":
       ZFRAME_MODEL_PATH = 'zframe002-model.vtk'
-      zframeConfig = 'z002'
+      self.zframeConfig = 'z002'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/zframe/zframe002.txt")
     elif self.configFileSelectionBox.currentText == "Z-frame z003":
       ZFRAME_MODEL_PATH = 'zframe003-model.vtk'
-      zframeConfig = 'z003'
+      self.zframeConfig = 'z003'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/zframe/zframe003.txt")
     else: #self.configFileSelectionBox.currentText == "Z-frame z003":
       ZFRAME_MODEL_PATH = 'zframe004-model.vtk'
-      zframeConfig = 'z004'
+      self.zframeConfig = 'z004'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/zframe/zframe004.txt")
     with open(zframeConfigFilePath,"r") as f:
       configFileLines = f.readlines()
 
     # Parse zFrame configuration file here to identify the dimensions and topology of the zframe
     # Save the origins and diagonal vectors of each of the 3 sides of the zframe in a 2D array
-    frameTopology = []
-    zFrameFiducials = []
+    self.frameTopology = []
+    self.zFrameFiducials = []
     for line in configFileLines:
       if line.startswith('Side 1') or line.startswith('Side 2'): 
         vec = [float(s) for s in re.findall(r'-?\d+\.?\d*', line)]
         vec.pop(0)
-        frameTopology.append(vec)
+        self.frameTopology.append(vec)
       elif line.startswith('Base'):
         vec = [float(s) for s in re.findall(r'-?\d+\.?\d*', line)]
-        frameTopology.append(vec)
+        self.frameTopology.append(vec)
       elif line.startswith('Fiducial'):
         vec = [float(s) for s in re.findall(r'(-?\d+)(?!:)', line)]
-        zFrameFiducials.append(vec)
+        self.zFrameFiducials.append(vec)
     # Convert frameTopology points to a string, for the sake of passing it as a string argument to the ZframeRegistration CLI 
-    frameTopologyString = ' '.join([str(elem) for elem in frameTopology])
+    self.frameTopologyString = ' '.join([str(elem) for elem in self.frameTopology])
 
     self.removeNodeByName('ZFrameModel')
     self.loadZFrameModel(ZFRAME_MODEL_PATH,'ZFrameModel')
-    zFrameMaskedVolume, continueRegistration = self.createMaskedVolumeBySize(inputVolume, self.thresholdSliderWidget.value, self.fiducialSizeSliderWidget.minimumValue, self.fiducialSizeSliderWidget.maximumValue, zframeConfig)
-    if continueRegistration:
+
+    result = False
+    result, outputTransform = self.registerZFrame()
+    self.increaseThresholdForRetry = False
+
+    self.zFrameModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
+    self.zFrameModelNode.GetDisplayNode().SetVisibility2D(True)
+    self.zFrameModelNode.GetDisplayNode().SetSliceIntersectionThickness(2)
+    self.zFrameModelNode.SetDisplayVisibility(True)
+
+    if result:
+      self.onRegistrationSuccess()
+    else:
+      self.onRegistrationFailure()
+
+  def registerZFrame(self):
+    # If there is a zFrame image selected, perform the calibration step to calculate the CLB matrix
+    inputVolume = self.getNodeFromImageRole("CALIBRATION")
+
+    outputTransform = self.ZFrameCalibrationTransformNode
+
+    if not inputVolume:
+      return False, outputTransform
+    
+    # First try without repair methods
+    loopRegistration = True
+    while loopRegistration:
+      zFrameMaskedVolume = self.createMaskedVolumeBySize(inputVolume, False)
       if zFrameMaskedVolume.GetImageData().GetScalarRange()[1] > 0:
+        # Crop if not 256x256
+        zFrameMaskedVolumeDims = zFrameMaskedVolume.GetImageData().GetDimensions()
+        if zFrameMaskedVolumeDims[0] != 256 and zFrameMaskedVolumeDims[1] != 256:
+          self.cropVolume(zFrameMaskedVolume, 256, 256)
+        
         centerOfMassSlice = int(self.findCentroidOfVolume(zFrameMaskedVolume)[2])
         # Run zFrameRegistration CLI module
         params = {'inputVolume': zFrameMaskedVolume, 'startSlice': centerOfMassSlice-3, 'endSlice': centerOfMassSlice+3,
-                  'outputTransform': outputTransform, 'zframeConfig': zframeConfig, 'frameTopology': frameTopologyString, 
+                  'outputTransform': outputTransform, 'zframeConfig': self.zframeConfig, 'frameTopology': self.frameTopologyString, 
+                  'zFrameFids': ''}
+        cliNode = slicer.cli.run(slicer.modules.zframeregistration, None, params, wait_for_completion=True)
+        if cliNode.GetStatus() & cliNode.ErrorsMask:
+          print(cliNode.GetErrorText())
+      else:
+        print("Masked volume empty")
+      regResult = self.checkRegistrationResult(outputTransform, zFrameMaskedVolume, self.zFrameFiducials)
+      if not regResult:
+        # Try to process at different thresholds
+        if self.retryFailedRegistrationCheckBox.isChecked():
+          if not self.increaseThresholdForRetry:
+            if not (self.thresholdSliderWidget.value <= self.thresholdSliderWidget.minimum):
+              self.thresholdSliderWidget.value = self.thresholdSliderWidget.value - 0.02
+              print(f'Retrying; decreasing threshold percentage to {self.thresholdSliderWidget.value}')
+              loopRegistration = True
+            else:
+              self.increaseThresholdForRetry = True
+              self.thresholdSliderWidget.value = self.defaultThresholdPercentage + 0.04
+              print(f'Retrying; increasing threshold percentage to {self.thresholdSliderWidget.value}')
+              loopRegistration = True
+          else:
+            if not (self.thresholdSliderWidget.value >= (self.thresholdSliderWidget.maximum/5)):
+              self.thresholdSliderWidget.value = self.thresholdSliderWidget.value + 0.04
+              print(f'Retrying; increasing threshold percentage to {self.thresholdSliderWidget.value}')
+              loopRegistration = True
+            else:
+              print("Retries failed; Moving on to repair attempt")
+              self.thresholdSliderWidget.value = self.defaultThresholdPercentage
+              loopRegistration = False
+        else:
+          loopRegistration = False
+      else:
+        loopRegistration = False
+        return True, outputTransform
+      
+    if self.repairFiducialImageCheckBox.isChecked():
+      zFrameMaskedVolume = self.createMaskedVolumeBySize(inputVolume, True)
+      if zFrameMaskedVolume.GetImageData().GetScalarRange()[1] > 0:
+        # Crop if not 256x256
+        zFrameMaskedVolumeDims = zFrameMaskedVolume.GetImageData().GetDimensions()
+        if zFrameMaskedVolumeDims[0] != 256 and zFrameMaskedVolumeDims[1] != 256:
+          self.cropVolume(zFrameMaskedVolume, 256, 256)
+        
+        centerOfMassSlice = int(self.findCentroidOfVolume(zFrameMaskedVolume)[2])
+        # Run zFrameRegistration CLI module
+        params = {'inputVolume': zFrameMaskedVolume, 'startSlice': centerOfMassSlice-3, 'endSlice': centerOfMassSlice+3,
+                  'outputTransform': outputTransform, 'zframeConfig': self.zframeConfig, 'frameTopology': self.frameTopologyString, 
                   'zFrameFids': ''}
         cliNode = slicer.cli.run(slicer.modules.zframeregistration, None, params, wait_for_completion=True)
         if cliNode.GetStatus() & cliNode.ErrorsMask:
@@ -452,27 +530,43 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       else:
         print("Masked volume empty")
 
-      self.zFrameModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
-      self.zFrameModelNode.GetDisplayNode().SetVisibility2D(True)
-      self.zFrameModelNode.GetDisplayNode().SetSliceIntersectionThickness(2)
-      self.zFrameModelNode.SetDisplayVisibility(True)
+      regResult = self.checkRegistrationResult(outputTransform, zFrameMaskedVolume, self.zFrameFiducials)
+      return regResult, outputTransform
+    
+    return False, outputTransform
+  
+  def focusSliceWindowsOnVolume(self, volumeNode):
+    red_logic = slicer.app.layoutManager().sliceWidget("Red").sliceLogic()
+    compositeNodeR = red_logic.GetSliceCompositeNode()
+    green_logic = slicer.app.layoutManager().sliceWidget("Green").sliceLogic()
+    compositeNodeG = green_logic.GetSliceCompositeNode()
+    yellow_logic = slicer.app.layoutManager().sliceWidget("Yellow").sliceLogic()
+    compositeNodeY = yellow_logic.GetSliceCompositeNode()
 
-      regResult = self.checkRegistrationResult(outputTransform, zFrameMaskedVolume, zFrameFiducials)
-      if not regResult:
-        # As a last ditch effort, try process without repair attempt
-        if self.repairFiducialImageCheckBox.isChecked():
-          self.repairFiducialImageCheckBox.setChecked(False)
-          self.thresholdSliderWidget.value = self.defaultThresholdPercentage
-          self.registerZFrame()
-        else:
-          print("Registration Failure")
-          self.manualRegistrationGroupBox.collapsed = False
-          with open('C:/w/data/ProstateBiopsyModuleTest/RegTest/failLog.txt', 'a') as f:
-            f.write(f'{inputVolume.GetName()}\n')
-      else:
-        print("Registration Successful")
-        with open('C:/w/data/ProstateBiopsyModuleTest/RegTest/successLog.txt', 'a') as f:
-          f.write(f'{inputVolume.GetName()}\n')
+    compositeNodeR.SetBackgroundVolumeID(volumeNode.GetID())
+    compositeNodeG.SetBackgroundVolumeID(volumeNode.GetID())
+    compositeNodeY.SetBackgroundVolumeID(volumeNode.GetID())
+
+  def onRegistrationSuccess(self):
+    print("Registration Successful")
+    self.increaseThresholdForRepair = False
+    inputVolume = self.getNodeFromImageRole("CALIBRATION")
+
+    self.focusSliceWindowsOnVolume(inputVolume)
+
+    with open('C:/w/data/ProstateBiopsyModuleTest/RegTest/successLog.txt', 'a') as f:
+      f.write(f'{inputVolume.GetName()}\n')
+
+  def onRegistrationFailure(self):
+    print("Registration Failure")
+    self.increaseThresholdForRepair = False
+    self.manualRegistrationGroupBox.collapsed = False
+    inputVolume = self.getNodeFromImageRole("CALIBRATION")
+
+    self.focusSliceWindowsOnVolume(inputVolume)
+    
+    with open('C:/w/data/ProstateBiopsyModuleTest/RegTest/failLog.txt', 'a') as f:
+      f.write(f'{inputVolume.GetName()}\n')
   
   def checkRegistrationResult(self, outputTransform, fiducialVolume, zFrameFiducials):
     # Check the midpoint of each ZFrame fiducial and some points around it for a detected fiducial
@@ -511,9 +605,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     return True
 
   def loadZFrameModel(self, ZFRAME_MODEL_PATH, ZFRAME_MODEL_NAME):
-    if self.zFrameModelNode:
-      slicer.mrmlScene.RemoveNode(self.zFrameModelNode)
-      self.zFrameModelNode = None
     currentFilePath = os.path.dirname(os.path.realpath(__file__))
     zFrameModelPath = os.path.join(currentFilePath, "Resources", "zframe", ZFRAME_MODEL_PATH)
     self.zFrameModelNode = slicer.util.loadModel(zFrameModelPath)
@@ -523,122 +614,157 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.zFrameModelNode.SetDisplayVisibility(True)
 
   # TODO: Detect whether a segment is on the border of the image and remove it
-  def createMaskedVolumeBySize(self, inputVolume, thresholdPercent, minimumSize, maximumSize, zframeConfig):
-    # Create segmentation node
-    segmentationNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
-    segmentationNode.SetReferenceImageGeometryParameterFromVolumeNode(inputVolume)
+  def createMaskedVolumeBySize(self, inputVolume, repair):
+    loopRegistration = True
+    while loopRegistration:
+      thresholdPercent = self.thresholdSliderWidget.value 
+      minimumSize = self.fiducialSizeSliderWidget.minimumValue
+      maximumSize = self.fiducialSizeSliderWidget.maximumValue
+      zframeConfig = self.zframeConfig
 
-    # Create segment
-    segmentId = segmentationNode.GetSegmentation().AddEmptySegment("base")
+      # Create segmentation node
+      segmentationNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+      segmentationNode.CreateDefaultDisplayNodes()
+      segmentationNode.SetReferenceImageGeometryParameterFromVolumeNode(inputVolume)
 
-    # Get access to the segment editor effect
-    segmentEditorWidget = slicer.qMRMLSegmentEditorWidget()
-    segmentEditorWidget.setMRMLScene(slicer.mrmlScene)
-    segmentEditorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentEditorNode")
-    segmentEditorWidget.setMRMLSegmentEditorNode(segmentEditorNode)
-    segmentEditorWidget.setSegmentationNode(segmentationNode)
-    segmentEditorWidget.setSourceVolumeNode(inputVolume)
-    segmentEditorWidget.setCurrentSegmentID(segmentId)
+      # Create segment
+      segmentId = segmentationNode.GetSegmentation().AddEmptySegment("base")
 
-    # Thresholding
-    inputVolume.GetImageData().GetScalarTypeMax()
-    segmentEditorWidget.setActiveEffectByName("Threshold")
-    effect = segmentEditorWidget.activeEffect()
-    segmentEditorWidget.setCurrentSegmentID(segmentId)
-    effect.setParameter("MinimumThreshold", int((inputVolume.GetImageData().GetScalarRange()[1]-inputVolume.GetImageData().GetScalarRange()[0]) * thresholdPercent + inputVolume.GetImageData().GetScalarRange()[0]))
-    effect.setParameter("MaximumThreshold", int(inputVolume.GetImageData().GetScalarRange()[1]))
-    effect.self().onApply()
+      # Get access to the segment editor effect
+      segmentEditorWidget = slicer.qMRMLSegmentEditorWidget()
+      segmentEditorWidget.setMRMLScene(slicer.mrmlScene)
+      segmentEditorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentEditorNode")
+      segmentEditorNode.SetOverwriteMode(slicer.vtkMRMLSegmentEditorNode.OverwriteNone)
+      segmentEditorWidget.setMRMLSegmentEditorNode(segmentEditorNode)
+      segmentEditorWidget.setSegmentationNode(segmentationNode)
+      segmentEditorWidget.setSourceVolumeNode(inputVolume)
+      segmentEditorWidget.setCurrentSegmentID(segmentId)
 
-    # Islands removal
-    segmentEditorWidget.setActiveEffectByName("Islands")
-    effect = segmentEditorWidget.activeEffect()
-    effect.setParameter("Operation", "REMOVE_SMALL_ISLANDS")
-    effect.setParameter("MinimumSize", minimumSize)
-    effect.self().onApply()
+      # Thresholding
+      inputVolume.GetImageData().GetScalarTypeMax()
+      segmentEditorWidget.setActiveEffectByName("Threshold")
+      effect = segmentEditorWidget.activeEffect()
+      segmentEditorWidget.setCurrentSegmentID(segmentId)
+      effect.setParameter("MinimumThreshold", int((inputVolume.GetImageData().GetScalarRange()[1]-inputVolume.GetImageData().GetScalarRange()[0]) * thresholdPercent + inputVolume.GetImageData().GetScalarRange()[0]))
+      effect.setParameter("MaximumThreshold", int(inputVolume.GetImageData().GetScalarRange()[1]))
+      effect.self().onApply()
 
-    # Copy
-    clonedSegmentId = segmentationNode.GetSegmentation().AddEmptySegment("cloned")
-    segmentEditorWidget.setActiveEffectByName("Logical operators")
-    effect = segmentEditorWidget.activeEffect()
-    segmentEditorWidget.setCurrentSegmentID(clonedSegmentId)
-    effect.setParameter("Operation", "COPY")
-    effect.setParameter("ModifierSegmentID", segmentId)
-    effect.self().onApply()
+      # Islands removal
+      segmentEditorWidget.setActiveEffectByName("Islands")
+      effect = segmentEditorWidget.activeEffect()
+      effect.setParameter("Operation", "REMOVE_SMALL_ISLANDS")
+      effect.setParameter("MinimumSize", minimumSize)
+      effect.self().onApply()
 
-    # Isolate largest islands
-    segmentEditorWidget.setActiveEffectByName("Islands")
-    effect = segmentEditorWidget.activeEffect()
-    effect.setParameter("MinimumSize", maximumSize)
-    effect.self().onApply()
+      # Copy
+      clonedSegmentId = segmentationNode.GetSegmentation().AddEmptySegment("cloned")
+      segmentEditorWidget.setActiveEffectByName("Logical operators")
+      effect = segmentEditorWidget.activeEffect()
+      segmentEditorWidget.setCurrentSegmentID(clonedSegmentId)
+      effect.setParameter("Operation", "COPY")
+      effect.setParameter("ModifierSegmentID", segmentId)
+      effect.self().onApply()
 
-    # Subtract from base segment to leave only islands in size range
-    segmentEditorWidget.setActiveEffectByName("Logical operators")
-    effect = segmentEditorWidget.activeEffect()
-    segmentEditorWidget.setCurrentSegmentID(segmentId)
-    effect.setParameter("Operation", "SUBTRACT")
-    effect.setParameter("ModifierSegmentID", clonedSegmentId)
-    effect.self().onApply()
+      # Isolate largest islands
+      segmentEditorWidget.setActiveEffectByName("Islands")
+      effect = segmentEditorWidget.activeEffect()
+      effect.setParameter("MinimumSize", maximumSize)
+      effect.self().onApply()
 
-    segmentationNode.GetSegmentation().RemoveSegment(clonedSegmentId)
-    
-    # Remove all islands on the edges of the image
-    if self.removeBorderIslandsCheckBox.isChecked():
-      borderVoxels = True
-      while borderVoxels:
-        tempLabelmapVolume = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLabelMapVolumeNode', 'TempLabelMapVolume')
-        slicer.modules.segmentations.logic().ExportVisibleSegmentsToLabelmapNode(segmentationNode, tempLabelmapVolume, inputVolume)
-        tempLabelMapArray = slicer.util.arrayFromVolume(tempLabelmapVolume)
-        slicer.mrmlScene.RemoveNode(tempLabelmapVolume)
+      # Subtract from base segment to leave only islands in size range
+      segmentEditorWidget.setActiveEffectByName("Logical operators")
+      effect = segmentEditorWidget.activeEffect()
+      segmentEditorWidget.setCurrentSegmentID(segmentId)
+      effect.setParameter("Operation", "SUBTRACT")
+      effect.setParameter("ModifierSegmentID", clonedSegmentId)
+      effect.self().onApply()
 
-        mask = np.zeros_like(tempLabelMapArray, dtype=bool)
-        margin = int(self.borderMarginSliderWidget.value)
-        # mask[0, :, :] = True # Front
-        # mask[-1, :, :] = True # Back
-        mask[:, 0:margin, :] = True
-        mask[:, (-margin-1):-1, :] = True
-        mask[:, :, 0:margin] = True
-        mask[:, :, (-margin-1):-1] = True
+      segmentationNode.GetSegmentation().RemoveSegment(clonedSegmentId)
+      
+      # Remove all islands on the edges of the image
+      if self.removeBorderIslandsCheckBox.isChecked():
+        borderVoxels = True
+        while borderVoxels:
+          tempLabelmapVolume = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLLabelMapVolumeNode', 'TempLabelMapVolume')
+          slicer.modules.segmentations.logic().ExportVisibleSegmentsToLabelmapNode(segmentationNode, tempLabelmapVolume, inputVolume)
+          tempLabelMapArray = slicer.util.arrayFromVolume(tempLabelmapVolume)
+          slicer.mrmlScene.RemoveNode(tempLabelmapVolume)
 
-        tempLabelMapArray[~mask] = 0
-        indices = np.argwhere(tempLabelMapArray == 1)
-        if len(indices) <= 0:
-          borderVoxels = False
-        else:
-          segmentEditorWidget.setActiveEffectByName("Islands")
-          effect = segmentEditorWidget.activeEffect()
-          effect.setParameter("Operation", "REMOVE_SELECTED_ISLAND")
-          self.removeSelectedIsland(effect, [indices[0][2], indices[0][1], indices[0][0]])
+          mask = np.zeros_like(tempLabelMapArray, dtype=bool)
+          margin = int(self.borderMarginSliderWidget.value)
+          # mask[0, :, :] = True # Front
+          # mask[-1, :, :] = True # Back
+          mask[:, 0:margin, :] = True
+          mask[:, (-margin-1):-1, :] = True
+          mask[:, :, 0:margin] = True
+          mask[:, :, (-margin-1):-1] = True
 
-    # Clean up
-    segmentEditorWidget.setActiveEffectByName("No editing")
-    segmentEditorWidget = None
+          tempLabelMapArray[~mask] = 0
+          indices = np.argwhere(tempLabelMapArray == 1)
+          if len(indices) <= 0:
+            borderVoxels = False
+          else:
+            segmentEditorWidget.setActiveEffectByName("Islands")
+            effect = segmentEditorWidget.activeEffect()
+            effect.setParameter("Operation", "REMOVE_SELECTED_ISLAND")
+            self.removeSelectedIsland(effect, [indices[0][2], indices[0][1], indices[0][0]])
 
-    # Export segmentation to label map
-    self.removeNodeByName('MaskedCalibrationLabelMapVolume')
-    labelMapVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", "MaskedCalibrationLabelMapVolume")
-    slicer.modules.segmentations.logic().ExportVisibleSegmentsToLabelmapNode(segmentationNode, labelMapVolumeNode, inputVolume)
+     
 
-    # Count number of Islands and attempt repair if one is missing
-    # Does not support 9 fiducial frame
-    continueRegistration = True
-    if self.repairFiducialImageCheckBox.isChecked():
-      if not zframeConfig == 'z003':
-        continueRegistration = self.countAndRepairFiducials(labelMapVolumeNode)
+      # Export segmentation to label map
+      self.removeNodeByName('MaskedCalibrationLabelMapVolume')
+      labelMapVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", "MaskedCalibrationLabelMapVolume")
+      slicer.modules.segmentations.logic().ExportVisibleSegmentsToLabelmapNode(segmentationNode, labelMapVolumeNode, inputVolume)
+
+       # Clean up
+      segmentEditorWidget.setActiveEffectByName("No editing")
+      segmentEditorWidget.deleteLater()
+      segmentEditorWidget = None
+      slicer.mrmlScene.RemoveNode(segmentationNode)
+      slicer.mrmlScene.RemoveNode(segmentEditorNode)
+
+      # Count number of Islands and attempt repair if one is missing
+      # Does not support 9 fiducial frame
+      if repair:
+        if not zframeConfig == 'z003':
+          loopRegistration = self.countAndRepairFiducials(labelMapVolumeNode)
+        else: 
+          loopRegistration = False
+      else:
+        loopRegistration = False
 
     # Convert label map to scalar volume
     scalarVolumeNode = None
-    if continueRegistration:
-      self.removeNodeByName('MaskedCalibrationVolume')
-      scalarVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "MaskedCalibrationVolume")
-      slicer.modules.volumes.logic().CreateScalarVolumeFromVolume(slicer.mrmlScene, scalarVolumeNode, labelMapVolumeNode)
-      self.increaseThresholdForRepair = False
-
-    slicer.mrmlScene.RemoveNode(segmentationNode)
-    slicer.mrmlScene.RemoveNode(segmentEditorNode)
+    self.removeNodeByName('MaskedCalibrationVolume')
+    scalarVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "MaskedCalibrationVolume")
+    slicer.modules.volumes.logic().CreateScalarVolumeFromVolume(slicer.mrmlScene, scalarVolumeNode, labelMapVolumeNode)
+    self.increaseThresholdForRepair = False
     slicer.mrmlScene.RemoveNode(labelMapVolumeNode)
 
-    return scalarVolumeNode, continueRegistration
+    return scalarVolumeNode
   
+  def cropVolume(self, volumeNode, xSize, ySize):
+    imageData = volumeNode.GetImageData()
+    dims = imageData.GetDimensions()
+
+    xMargin = (dims[0] - xSize, dims[0] - xSize)
+    if xMargin[0] % 2 == 1:
+      xMargin = (xMargin[0]//2+1, xMargin[1]//2)
+    else:
+      xMargin = (xMargin[0]//2, xMargin[1]//2)
+    yMargin = (dims[1] - ySize, dims[1] - ySize)
+    if yMargin[0] % 2 == 1:
+      yMargin = (yMargin[0]//2+1, yMargin[1]//2)
+    else:
+      yMargin = (yMargin[0]//2, yMargin[1]//2)
+
+    # Create a vtkExtractVOI filter to crop the image data
+    extractVoi = vtk.vtkExtractVOI()
+    extractVoi.SetInputData(imageData)
+    extractVoi.SetVOI(xMargin[0], dims[0] - xMargin[1] - 1, yMargin[0], dims[1] - yMargin[1] - 1, 0, dims[2] - 1)
+    extractVoi.Update()
+    volumeNode.SetAndObserveImageData(extractVoi.GetOutput())
+
   def removeSelectedIsland(self, scriptedEffect, ijk):
     # Generate merged labelmap of all visible segments
     segmentationNode = scriptedEffect.parameterSetNode().GetSegmentationNode()
@@ -692,14 +818,16 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     if labelMapVolumeNode.GetImageData().GetScalarRange()[1] == 0:
       numberOfSegments = 0
     else:
-      segNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
-      slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(labelMapVolumeNode, segNode)
+      segmentationNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+      segmentationNode.CreateDefaultDisplayNodes()
+      slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(labelMapVolumeNode, segmentationNode)
 
       segmentEditorWidget = slicer.qMRMLSegmentEditorWidget()
       segmentEditorWidget.setMRMLScene(slicer.mrmlScene)
       segmentEditorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentEditorNode")
+      segmentEditorNode.SetOverwriteMode(slicer.vtkMRMLSegmentEditorNode.OverwriteNone)
       segmentEditorWidget.setMRMLSegmentEditorNode(segmentEditorNode)
-      segmentEditorWidget.setSegmentationNode(segNode)
+      segmentEditorWidget.setSegmentationNode(segmentationNode)
       segmentEditorWidget.setSourceVolumeNode(labelMapVolumeNode)
 
       segmentEditorWidget.setActiveEffectByName("Islands")
@@ -708,64 +836,78 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       effect.setParameter("MinimumSize", 0)
       effect.self().onApply()
 
-      numberOfSegments = segNode.GetSegmentation().GetNumberOfSegments()
+      numberOfSegments = segmentationNode.GetSegmentation().GetNumberOfSegments()
 
       # Cleanup
       segmentEditorWidget.setActiveEffectByName("No editing")
-      slicer.mrmlScene.RemoveNode(segNode)
+      slicer.mrmlScene.RemoveNode(segmentationNode)
       slicer.mrmlScene.RemoveNode(segmentEditorNode)
+      segmentEditorWidget.deleteLater()
       segmentEditorWidget = None
 
     # Attempt repair
     result = ""
     print(f'Segments detected: {numberOfSegments}')
-    if numberOfSegments == 6:
-      print("6 fiducials detected; trying to repair")
-      result = self.repairMissingFiducial(labelMapVolumeNode)
-      print(result)
-      if result == "success":
+
+    if numberOfSegments > 0:
+      # Determine if the image is salvageable
+      # Isolate middle slice
+      imageData = labelMapVolumeNode.GetImageData()
+      centroid = self.findCentroidOfVolume(labelMapVolumeNode)
+      middleSlice = int(centroid[2])
+      dims = imageData.GetDimensions()
+      numpy_array = vtk.util.numpy_support.vtk_to_numpy(imageData.GetPointData().GetScalars())
+      numpy_array = numpy_array.reshape(dims[2], dims[1], dims[0])
+      numpy_array = numpy_array.transpose(2,1,0)
+      slice_array = numpy_array[:, :, middleSlice]
+
+      # Calculate bounding box to see if the dimensions are about right and that there are only 1-2 missing fiducials
+      rangeNumber = 15 # how much wiggle room to allow for bounding box
+      leftColumn, rightColumn, topRow, bottomRow = self.calculateBoundingBox(slice_array)
+      width = (rightColumn - leftColumn) * labelMapVolumeNode.GetSpacing()[0]
+      height = (bottomRow - topRow) * labelMapVolumeNode.GetSpacing()[1]
+      # print(f'leftColumn {leftColumn}')
+      # print(f'rightColumn {rightColumn}')
+      # print(f'topRow {topRow}')
+      # print(f'bottomRow {bottomRow}')
+      expectedWidth = abs(self.frameTopology[0][0] - self.frameTopology[2][0])
+      expectedHeight = abs(self.frameTopology[0][1] - self.frameTopology[2][1])
+      widthCorrect = (expectedWidth - rangeNumber) <= width <= (expectedWidth + rangeNumber)
+      heightCorrect = (expectedWidth - rangeNumber) <= width <= (expectedWidth + rangeNumber)
+
+      if numberOfSegments == 7:
+        if widthCorrect and heightCorrect:
+          print("7 fiducials detected; bounding box dimensions correct")
+          return False
+        else:
+          print("7 fiducials detected; however, bounding box dimensions are wrong")
+      if (numberOfSegments == 6 or numberOfSegments == 5) and widthCorrect and heightCorrect:
+        print("5-6 fiducials detected; bounding box dimensions correct; trying to repair")
+        result = self.repairMissingFiducial(slice_array, numpy_array, leftColumn, rightColumn, topRow, bottomRow, middleSlice, labelMapVolumeNode)
+        if result == "success":
+          return False
+    if not self.increaseThresholdForRepair:
+      if not (self.thresholdSliderWidget.value <= self.thresholdSliderWidget.minimum):
+        self.thresholdSliderWidget.value = self.thresholdSliderWidget.value - 0.01
+        print(f'Less than 6 or more than 7 fiducials detected; decreasing threshold percentage to {self.thresholdSliderWidget.value}')
         return True
-    if (numberOfSegments < 6 or numberOfSegments > 7) or result == "anomaly":
-      if not self.increaseThresholdForRepair:
-        if not (self.thresholdSliderWidget.value <= self.thresholdSliderWidget.minimum):
-          print("Less than 6 or more than 7 fiducials detected; decreasing threshold percentage")
-          self.thresholdSliderWidget.value = self.thresholdSliderWidget.value - 0.01
-          self.registerZFrame()
-          return False
-        else:
-          self.increaseThresholdForRepair = True
-          self.registerZFrame()
-          return False
       else:
-        # Try again with the assumption that the thresholding was too lenient
-        if not (self.thresholdSliderWidget.value >= (self.thresholdSliderWidget.maximum/5)):
-          print("Less than 6 or more than 7 fiducials detected; increasing threshold percentage")
-          self.thresholdSliderWidget.value = self.thresholdSliderWidget.value + 0.02
-          print(self.thresholdSliderWidget.value)
-          self.registerZFrame()
-          return False
-        else:
-          print("Fiducial repair failed")
-          self.thresholdSliderWidget.value = self.defaultThresholdPercentage
-          return True
-    return True
+        self.increaseThresholdForRepair = True
+        self.thresholdSliderWidget.value = self.defaultThresholdPercentage + 0.02
+        print(f'Switching to increasing to {self.thresholdSliderWidget.value}')
+        return True
+    else:
+      # Try again with the assumption that the thresholding was too lenient
+      if not (self.thresholdSliderWidget.value >= (self.thresholdSliderWidget.maximum/5)):
+        self.thresholdSliderWidget.value = self.thresholdSliderWidget.value + 0.02
+        print(f'Less than 6 or more than 7 fiducials detected; increasing threshold percentage to {self.thresholdSliderWidget.value}')
+        return True
+      else:
+        print("Fiducial repair failed")
+        self.thresholdSliderWidget.value = self.defaultThresholdPercentage
+        return False
 
-  def repairMissingFiducial(self, labelMapVolumeNode):
-    # Identify missing fiducial
-    # Isolate middle slice
-    imageData = labelMapVolumeNode.GetImageData()
-    centroid = self.findCentroidOfVolume(labelMapVolumeNode)
-    middleSlice = int(centroid[2])
-    dims = imageData.GetDimensions()
-    numpy_array = vtk.util.numpy_support.vtk_to_numpy(imageData.GetPointData().GetScalars())
-    numpy_array = numpy_array.reshape(dims[2], dims[1], dims[0])
-    numpy_array = numpy_array.transpose(2,1,0)
-    slice_array = numpy_array[:, :, middleSlice]
-
-    imageData = self.numpy_to_vtk_image_data(numpy_array)
-    labelMapVolumeNode.SetAndObserveImageData(imageData)
-
-    # Shrink margins of image
+  def calculateBoundingBox(self, slice_array):
     leftColumn = 0
     rightColumn = slice_array.shape[0]
     topRow = 0
@@ -786,45 +928,47 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       if np.any(slice_array[:,column] > 0):
         bottomRow = column
         break
-    cropped = slice_array[leftColumn:rightColumn, topRow:bottomRow]
+    return leftColumn, rightColumn, topRow, bottomRow
 
-    # print(f'leftColumn {leftColumn}')
-    # print(f'rightColumn {rightColumn}')
-    # print(f'topRow {topRow}')
-    # print(f'bottomRow {bottomRow}')
+  def repairMissingFiducial(self, slice_array, numpy_array, leftColumn, rightColumn, topRow, bottomRow, middleSlice, labelMapVolumeNode):
+    # Identify missing fiducial
+    # Shrink margins of image
+    cropped = slice_array[leftColumn:rightColumn, topRow:bottomRow]
 
     # Probe array for values to look for missing value
     missingFiducial = 0
     r = 10
     thickness = 8
     adjust = 4
+    length = 4
+    diagLength = int(math.sqrt(length**2 + length**2))
     # Corners
     # Top Left
     if not np.any(cropped[0:r, 0:r] > 0):
       print("Attempting repair of top left fiducial")
-      startLine = (leftColumn + adjust, topRow + adjust, middleSlice - 5)
-      endLine = (leftColumn + adjust, topRow + adjust, middleSlice + 5)
+      startLine = (leftColumn + adjust, topRow + adjust, middleSlice - (length//2))
+      endLine = (leftColumn + adjust, topRow + adjust, middleSlice + (length//2))
       numpy_array = self.drawThickLine(startLine, endLine, thickness, numpy_array)
       missingFiducial += 1
     # Top Right
     if not np.any(cropped[cropped.shape[0]-r:cropped.shape[0],0:r] > 0):
       print("Attempting repair of top right fiducial")
-      startLine = (leftColumn + cropped.shape[0] - adjust, topRow + adjust, middleSlice - 5)
-      endLine = (leftColumn + cropped.shape[0] - adjust, topRow + adjust, middleSlice + 5)
+      startLine = (leftColumn + cropped.shape[0] - adjust, topRow + adjust, middleSlice - (length//2))
+      endLine = (leftColumn + cropped.shape[0] - adjust, topRow + adjust, middleSlice + (length//2))
       numpy_array = self.drawThickLine(startLine, endLine, thickness, numpy_array)
       missingFiducial += 1
     # Bottom Left
     if not np.any(cropped[0:r,cropped.shape[1]-r:cropped.shape[1]] > 0):
       print("Attempting repair of bottom left fiducial")
-      startLine = (leftColumn + adjust, topRow + cropped.shape[1] - adjust, middleSlice - 5)
-      endLine = (leftColumn + adjust, topRow + cropped.shape[1] - adjust, middleSlice + 5)
+      startLine = (leftColumn + adjust, topRow + cropped.shape[1] - adjust, middleSlice - (length//2))
+      endLine = (leftColumn + adjust, topRow + cropped.shape[1] - adjust, middleSlice + (length//2))
       numpy_array = self.drawThickLine(startLine, endLine, thickness, numpy_array)
       missingFiducial += 1
     # Bottom Right
     if not np.any(cropped[cropped.shape[0]-r:cropped.shape[0],cropped.shape[1]-r:cropped.shape[1]] > 0):
       print("Attempting repair of bottom right fiducial")
-      startLine = (leftColumn + cropped.shape[0] - adjust, topRow + cropped.shape[1] - adjust, middleSlice - 5)
-      endLine = (leftColumn + cropped.shape[0] - adjust, topRow + cropped.shape[1] - adjust, middleSlice + 5)
+      startLine = (leftColumn + cropped.shape[0] - adjust, topRow + cropped.shape[1] - adjust, middleSlice - (length//2))
+      endLine = (leftColumn + cropped.shape[0] - adjust, topRow + cropped.shape[1] - adjust, middleSlice + (length//2))
       numpy_array = self.drawThickLine(startLine, endLine, thickness, numpy_array)
       missingFiducial += 1
 
@@ -832,31 +976,32 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     # Middle Left
     if not np.any(cropped[0:r, cropped.shape[1]//2-r//2:cropped.shape[1]//2+r//2] > 0):
       print("Attempting repair of middle left fiducial")
-      startLine = (leftColumn + adjust, topRow + cropped.shape[1]//2 - 5, middleSlice - 5)
-      endLine = (leftColumn + adjust, topRow + cropped.shape[1]//2 + 5, middleSlice + 5)
+      startLine = (leftColumn + adjust, topRow + cropped.shape[1]//2 - (diagLength//2), middleSlice - (diagLength//2))
+      endLine = (leftColumn + adjust, topRow + cropped.shape[1]//2 + (diagLength//2), middleSlice + (diagLength//2))
       numpy_array = self.drawThickLine(startLine, endLine, thickness, numpy_array)
       missingFiducial += 1
     # Middle Top  
     if not np.any(cropped[cropped.shape[0]//2-r//2:cropped.shape[0]//2+r//2, 0:r] > 0):
       print("Attempting repair of middle top fiducial")
-      startLine = (leftColumn + cropped.shape[0]//2 + 5, topRow + adjust, middleSlice - 5)
-      endLine = (leftColumn + cropped.shape[0]//2 - 5, topRow + adjust, middleSlice + 5)
+      startLine = (leftColumn + cropped.shape[0]//2 + (diagLength//2), topRow + adjust, middleSlice - (diagLength//2))
+      endLine = (leftColumn + cropped.shape[0]//2 - (diagLength//2), topRow + adjust, middleSlice + (diagLength//2))
       numpy_array = self.drawThickLine(startLine, endLine, thickness, numpy_array)
       missingFiducial += 1
     # Middle Right  
     if not np.any(cropped[cropped.shape[0]-r:cropped.shape[0], cropped.shape[1]//2-r//2:cropped.shape[1]//2+r//2] > 0):
       print("Attempting repair of middle right fiducial")
-      startLine = (leftColumn + cropped.shape[0] - adjust, topRow + cropped.shape[1]//2 + 5, middleSlice - 5)
-      endLine = (leftColumn + cropped.shape[0] - adjust, topRow +  cropped.shape[1]//2 - 5, middleSlice + 5)
+      startLine = (leftColumn + cropped.shape[0] - adjust, topRow + cropped.shape[1]//2 + (diagLength//2), middleSlice - (diagLength//2))
+      endLine = (leftColumn + cropped.shape[0] - adjust, topRow +  cropped.shape[1]//2 - (diagLength//2), middleSlice + (diagLength//2))
       numpy_array = self.drawThickLine(startLine, endLine, thickness, numpy_array)
       missingFiducial += 1
 
-    if missingFiducial == 1:
+    if 2 >= missingFiducial >= 1:
       imageData = self.numpy_to_vtk_image_data(numpy_array)
       labelMapVolumeNode.SetAndObserveImageData(imageData)
       return "success"
-    elif missingFiducial > 1:
+    else:
       return "anomaly"
+
 
 
   def drawThickLine(self, start, end, thickness, numpy_array):
