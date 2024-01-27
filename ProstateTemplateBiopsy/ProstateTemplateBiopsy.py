@@ -67,10 +67,23 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.ignoredVolumeNames = ['MaskedCalibrationVolume', 'MaskedCalibrationLabelMapVolume', 'TempLabelMapVolume']
     self.imageRoles = ['N/A', 'CALIBRATION', 'PLANNING', 'CONFIRMATION']
     self.zFrameModelNode = None
+    self.templateModelNode = None
+    self.calibratorModelNode = None
+    self.guideHolesModelNode = None
+    self.templateOrigin = None
+    self.templateHorizontalOffset = 5
+    self.templateVerticalOffset = 5
+    self.templateHorizontalLabels = []
+    self.templateVerticalLabels = []
     self.removeNodeByName('ZFrameTransform')
+    # TODO: Cleanup function to allow for a Reload to truly restart a case?
     self.ZFrameCalibrationTransformNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", "ZFrameTransform")
     self.increaseThresholdForRepair = False
     self.increaseThresholdForRetry = False
+    self.validRegistration = False
+    self.biopsyFiducialListNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode", "Target")
+    self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self.onTargetAdded)
+    self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self.onTargetMoved)
 
   def setup(self):
     ScriptedLoadableModuleWidget.setup(self)
@@ -144,7 +157,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     # ---------------------------------- Registration UI --------------------------------------
     # TODO: 
     # - Handle a missing fiducial (paint it in? modify registration code?)
-    # - Sometimes Transform sliders have a bug that cause one slider to change another when clicking directly towards it; couldn't reproduce but keep in mind
+    # - Sometimes Transform sliders have a bug that cause one slider to change another when clicking directly towards it; Might happen with switching transforms
     # - Load in defaults via config file (and make sure to use that in the threshold adjust code)
     # - Maybe try adding a margin during marker segmentation process? Also have a slider for it?
     registrationCollapsibleButton = ctk.ctkCollapsibleButton()
@@ -163,7 +176,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     registrationLayout.addRow(self.registrationButton)
 
     self.configFileSelectionBox = qt.QComboBox()
-    self.configFileSelectionBox.addItems(['Z-frame z001', 'Z-frame z002', 'Z-frame z003', 'Z-frame z004'])
+    self.configFileSelectionBox.addItems(['Template 001 - Seven Fiducials', 'Template 002 - Nine Fiducials', 'Template 003 - BRP Robot - Nine Fiducials', 'Template 004 - Wide Z-frame - Seven Fiducials'])
     self.configFileSelectionBox.setCurrentIndex(3)
     registrationLayout.addRow('ZFrame Configuration:', self.configFileSelectionBox)
 
@@ -202,6 +215,10 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.borderMarginSliderWidget.value = 15
     registrationParametersLayout.addRow("Border Removal Margin:", self.borderMarginSliderWidget)
 
+    self.removeOrientationCheckBox = qt.QCheckBox("Remove orientation from registration transform")
+    self.removeOrientationCheckBox.setChecked(True)
+    registrationParametersLayout.addRow(self.removeOrientationCheckBox)
+
     self.removeBorderIslandsCheckBox = qt.QCheckBox("Remove segment islands on border of volume")
     self.removeBorderIslandsCheckBox.setChecked(True)
     registrationParametersLayout.addRow(self.removeBorderIslandsCheckBox)
@@ -227,7 +244,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     manualRregistrationLayout.addWidget(self.manualRegistrationTransformSliders)
 
     self.manualRegistrationRotationSliders = slicer.qMRMLTransformSliders()
-    self.manualRegistrationTransformSliders.setWindowTitle("Rotation")
+    self.manualRegistrationRotationSliders.setWindowTitle("Rotation")
     self.manualRegistrationRotationSliders.TypeOfTransform = slicer.qMRMLTransformSliders.ROTATION
     self.manualRegistrationRotationSliders.setDecimals(3)
     manualRregistrationLayout.addWidget(self.manualRegistrationRotationSliders)
@@ -242,9 +259,31 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     planningCollapsibleButton = ctk.ctkCollapsibleButton()
     planningCollapsibleButton.text = "Planning"
     self.layout.addWidget(planningCollapsibleButton)
-    planningLayout = qt.QFormLayout(planningCollapsibleButton)
+    planningLayout = qt.QVBoxLayout(planningCollapsibleButton)
 
+    addTargetFont = qt.QFont()
+    addTargetFont.setPointSize(18)
+    addTargetFont.setBold(False)
+    self.addTargetButton = qt.QPushButton("Add Target")
+    self.addTargetButton.setFont(registerFont)
+    self.addTargetButton.toolTip = "Add a target for biopsy"
+    self.addTargetButton.enabled = True
+    self.addTargetButton.connect('clicked()', self.onAddTarget)
+    planningLayout.addWidget(self.addTargetButton)
 
+    # Image List Table with combo boxes to set role for images
+    self.targetListTableWidget = qt.QTableWidget(0, 5)
+    self.targetListTableWidget.setHorizontalHeaderLabels(["Target", "Grid", "Depth\n(cm)", "Position\n(RAS)", "   "])
+    self.targetListTableWidget.horizontalHeader().setSectionResizeMode(0, qt.QHeaderView.Stretch)
+    self.targetListTableWidget.horizontalHeader().setSectionResizeMode(1, qt.QHeaderView.Stretch)
+    self.targetListTableWidget.horizontalHeader().setSectionResizeMode(2, qt.QHeaderView.Stretch)
+    self.targetListTableWidget.horizontalHeader().setSectionResizeMode(3, qt.QHeaderView.Stretch)
+    self.targetListTableWidget.horizontalHeader().setSectionResizeMode(4, qt.QHeaderView.Fixed)
+    self.targetListTableWidget.setMaximumHeight(200)
+    planningLayout.addWidget(self.targetListTableWidget)
+    self.targetListTableWidget.setSizePolicy(qt.QSizePolicy.MinimumExpanding, qt.QSizePolicy.Minimum)
+    self.targetListTableWidget.setColumnWidth(4, 10)
+    self.targetListTableWidget.itemChanged.connect(self.onTargetListItemChanged)
     # -------------------------------------- ----------  --------------------------------------
     # Add vertical spacer
     self.layout.addStretch(1)
@@ -281,6 +320,13 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       self.casesPathBrowseButton.setEnabled(False)
       self.initializeButton.setEnabled(False)
       self.closeCaseButton.setEnabled(True)
+    elif phase == "PLANNING": 
+      # TODO: Show volume rendering of planning image maybe?
+      # TODO: Shift to PLANNING when REGISTRATION SUCCESS if a PLANNING image already arrived.
+      # If it hasn't yet arrived, then the arrival of a planning image will trigger PLANNING if a registration success flag is True
+      pass
+
+  # ------------------------------------- Connection -------------------------------------
 
   def initializeCase(self):
     if not self.casesPathBox.text:
@@ -356,8 +402,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       return
     self.addToImageList(newNode)
 
-  # TODO: Automatically update roles in another function
-  # TODO: Set fixed sizes for table/rows
   def addToImageList(self, newNode):
     rowCount = self.imageListTableWidget.rowCount
 
@@ -375,6 +419,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.imageListTableWidget.setCellWidget(rowCount, 2, imageRoleChoice) # set the combo box as a cell widget
 
     self.autoImageRoleAssignment(newNode, imageRoleChoice, rowCount)
+
+    # TODO: Maybe force the slice windows back to the image that should be showing depending on which Phase the module is in
 
   def updateImageListRoles(self, newRoleAssigned, rowCount):
     if newRoleAssigned in ["CALIBRATION", "PLANNING"]:
@@ -396,57 +442,36 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       if self.imageListTableWidget.cellWidget(index, 2).currentText == imageRole:
         return slicer.mrmlScene.GetFirstNodeByName(self.imageListTableWidget.item(index, 0).text())
   
+  # ------------------------------------- Registration -----------------------------------
+
   def onRegister(self):
-    currentFilePath = os.path.dirname(os.path.realpath(__file__))
-    self.zframeConfig = ""
-    if self.configFileSelectionBox.currentText == "Z-frame z001":
-      ZFRAME_MODEL_PATH = 'zframe001-model.vtk'
-      self.zframeConfig = 'z001'
-      zframeConfigFilePath = os.path.join(currentFilePath, "Resources/zframe/zframe001.txt")
-    elif self.configFileSelectionBox.currentText == "Z-frame z002":
-      ZFRAME_MODEL_PATH = 'zframe002-model.vtk'
-      self.zframeConfig = 'z002'
-      zframeConfigFilePath = os.path.join(currentFilePath, "Resources/zframe/zframe002.txt")
-    elif self.configFileSelectionBox.currentText == "Z-frame z003":
-      ZFRAME_MODEL_PATH = 'zframe003-model.vtk'
-      self.zframeConfig = 'z003'
-      zframeConfigFilePath = os.path.join(currentFilePath, "Resources/zframe/zframe003.txt")
-    else: #self.configFileSelectionBox.currentText == "Z-frame z003":
-      ZFRAME_MODEL_PATH = 'zframe004-model.vtk'
-      self.zframeConfig = 'z004'
-      zframeConfigFilePath = os.path.join(currentFilePath, "Resources/zframe/zframe004.txt")
-    with open(zframeConfigFilePath,"r") as f:
-      configFileLines = f.readlines()
+    if not self.getNodeFromImageRole("CALIBRATION"):
+      return
 
-    # Parse zFrame configuration file here to identify the dimensions and topology of the zframe
-    # Save the origins and diagonal vectors of each of the 3 sides of the zframe in a 2D array
-    self.frameTopology = []
-    self.zFrameFiducials = []
-    for line in configFileLines:
-      if line.startswith('Side 1') or line.startswith('Side 2'): 
-        vec = [float(s) for s in re.findall(r'-?\d+\.?\d*', line)]
-        vec.pop(0)
-        self.frameTopology.append(vec)
-      elif line.startswith('Base'):
-        vec = [float(s) for s in re.findall(r'-?\d+\.?\d*', line)]
-        self.frameTopology.append(vec)
-      elif line.startswith('Fiducial'):
-        vec = [float(s) for s in re.findall(r'(-?\d+)(?!:)', line)]
-        self.zFrameFiducials.append(vec)
-    # Convert frameTopology points to a string, for the sake of passing it as a string argument to the ZframeRegistration CLI 
-    self.frameTopologyString = ' '.join([str(elem) for elem in self.frameTopology])
-
-    self.removeNodeByName('ZFrameModel')
-    self.loadZFrameModel(ZFRAME_MODEL_PATH,'ZFrameModel')
+    self.loadTemplateConfiguration()
 
     result = False
     result, outputTransform = self.registerZFrame()
     self.increaseThresholdForRetry = False
 
-    self.zFrameModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
-    self.zFrameModelNode.GetDisplayNode().SetVisibility2D(True)
-    self.zFrameModelNode.GetDisplayNode().SetSliceIntersectionThickness(2)
-    self.zFrameModelNode.SetDisplayVisibility(True)
+    if self.zFrameModelNode:
+      self.zFrameModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
+      self.zFrameModelNode.GetDisplayNode().SetVisibility2D(True)
+      self.templateModelNode.SetDisplayVisibility(True)
+    if self.templateModelNode:
+      self.templateModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
+      self.templateModelNode.GetDisplayNode().SetVisibility2D(False)
+      self.templateModelNode.SetDisplayVisibility(True)
+    if self.calibratorModelNode:
+      self.calibratorModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
+      self.calibratorModelNode.GetDisplayNode().SetVisibility2D(True)
+      self.calibratorModelNode.GetDisplayNode().SetSliceIntersectionThickness(1)
+      self.calibratorModelNode.SetDisplayVisibility(True)
+    if self.guideHolesModelNode:
+      self.guideHolesModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
+      self.guideHolesModelNode.GetDisplayNode().SetVisibility2D(True)
+      self.guideHolesModelNode.GetDisplayNode().SetSliceIntersectionThickness(1)
+      self.guideHolesModelNode.SetDisplayVisibility(True)
 
     if result:
       self.onRegistrationSuccess()
@@ -457,7 +482,12 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     # If there is a zFrame image selected, perform the calibration step to calculate the CLB matrix
     inputVolume = self.getNodeFromImageRole("CALIBRATION")
 
-    outputTransform = self.ZFrameCalibrationTransformNode
+    if self.ZFrameCalibrationTransformNode:
+      outputTransform = self.ZFrameCalibrationTransformNode
+    else:
+      self.removeNodeByName("ZFrameTransform")
+      self.ZFrameCalibrationTransformNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", "ZFrameTransform")
+      outputTransform = self.ZFrameCalibrationTransformNode
 
     if not inputVolume:
       return False, outputTransform
@@ -480,6 +510,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         cliNode = slicer.cli.run(slicer.modules.zframeregistration, None, params, wait_for_completion=True)
         if cliNode.GetStatus() & cliNode.ErrorsMask:
           print(cliNode.GetErrorText())
+        if self.removeOrientationCheckBox.isChecked():
+          self.removeOrientationComponent(outputTransform)
       else:
         print("Masked volume empty")
       regResult = self.checkRegistrationResult(outputTransform, zFrameMaskedVolume, self.zFrameFiducials)
@@ -516,6 +548,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       if zFrameMaskedVolume.GetImageData().GetScalarRange()[1] > 0:
         # Crop if not 256x256
         zFrameMaskedVolumeDims = zFrameMaskedVolume.GetImageData().GetDimensions()
+        # TODO: Pad images smaller than 256 by 256
         if zFrameMaskedVolumeDims[0] != 256 and zFrameMaskedVolumeDims[1] != 256:
           self.cropVolume(zFrameMaskedVolume, 256, 256)
         
@@ -527,6 +560,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         cliNode = slicer.cli.run(slicer.modules.zframeregistration, None, params, wait_for_completion=True)
         if cliNode.GetStatus() & cliNode.ErrorsMask:
           print(cliNode.GetErrorText())
+        if self.removeOrientationCheckBox.isChecked():
+          self.removeOrientationComponent(outputTransform)
       else:
         print("Masked volume empty")
 
@@ -535,6 +570,22 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     
     return False, outputTransform
   
+  def removeOrientationComponent(self, transformNode):
+    # Get the transformation matrix
+    matrix = vtk.vtkMatrix4x4()
+    transformNode.GetMatrixTransformToParent(matrix)
+
+    # Set the orientation part of the matrix to identity
+    for i in range(3):
+        for j in range(3):
+            if i == j:
+                matrix.SetElement(i, j, 1)
+            else:
+                matrix.SetElement(i, j, 0)
+
+    # Update the transform node
+    transformNode.SetMatrixTransformToParent(matrix)
+
   def focusSliceWindowsOnVolume(self, volumeNode):
     red_logic = slicer.app.layoutManager().sliceWidget("Red").sliceLogic()
     compositeNodeR = red_logic.GetSliceCompositeNode()
@@ -554,6 +605,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
 
     self.focusSliceWindowsOnVolume(inputVolume)
 
+    self.validRegistration = True
+
     with open('C:/w/data/ProstateBiopsyModuleTest/RegTest/successLog.txt', 'a') as f:
       f.write(f'{inputVolume.GetName()}\n')
 
@@ -564,6 +617,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     inputVolume = self.getNodeFromImageRole("CALIBRATION")
 
     self.focusSliceWindowsOnVolume(inputVolume)
+
+    self.validRegistration = False
     
     with open('C:/w/data/ProstateBiopsyModuleTest/RegTest/failLog.txt', 'a') as f:
       f.write(f'{inputVolume.GetName()}\n')
@@ -604,16 +659,146 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         return False
     return True
 
-  def loadZFrameModel(self, ZFRAME_MODEL_PATH, ZFRAME_MODEL_NAME):
-    currentFilePath = os.path.dirname(os.path.realpath(__file__))
-    zFrameModelPath = os.path.join(currentFilePath, "Resources", "zframe", ZFRAME_MODEL_PATH)
-    self.zFrameModelNode = slicer.util.loadModel(zFrameModelPath)
-    self.zFrameModelNode.SetName(ZFRAME_MODEL_NAME)
-    modelDisplayNode = self.zFrameModelNode.GetDisplayNode()
-    modelDisplayNode.SetColor(0.0,1.0,1.0)
-    self.zFrameModelNode.SetDisplayVisibility(True)
+  def loadTemplateConfiguration(self):
+    currentFilePath = os.path.dirname(slicer.util.modulePath(self.__module__))
+    self.zframeConfig = ""
+    if self.configFileSelectionBox.currentIndex == 0:
+      ZFRAME_MODEL_PATH = 'template001/zframe001-model.vtk'
+      TEMPLATE_MODEL_PATH = 'template001/template001.vtk'
+      CALIBRATOR_MODEL_PATH = 'template001/template001-Calibrator.vtk'
+      GUIDEHOLES_MODEL_PATH = 'template001/template001-GuideHoles.vtk'
+      self.zframeConfig = 'z001'
+      zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template001/zframe001.txt")
+    elif self.configFileSelectionBox.currentIndex == 1:
+      ZFRAME_MODEL_PATH = 'template002/zframe002-model.vtk'
+      TEMPLATE_MODEL_PATH = 'template002/template002.vtk'
+      CALIBRATOR_MODEL_PATH = 'template002/template002-Calibrator.vtk'
+      GUIDEHOLES_MODEL_PATH = 'template002/template002-GuideHoles.vtk'
+      self.zframeConfig = 'z002'
+      zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template002/zframe002.txt")
+    elif self.configFileSelectionBox.currentIndex == 2:
+      ZFRAME_MODEL_PATH = 'template003/zframe003-model.vtk'
+      TEMPLATE_MODEL_PATH = 'template003/template003.vtk'
+      CALIBRATOR_MODEL_PATH = 'template003/template003-Calibrator.vtk'
+      GUIDEHOLES_MODEL_PATH = 'template003/template003-GuideHoles.vtk'
+      self.zframeConfig = 'z003'
+      zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template003/zframe003.txt")
+    else: #self.configFileSelectionBox.currentIndex == 3:
+      ZFRAME_MODEL_PATH = 'template004/zframe004-model.vtk'
+      TEMPLATE_MODEL_PATH = 'template004/template004.vtk'
+      CALIBRATOR_MODEL_PATH = 'template004/template004-Calibrator.vtk'
+      GUIDEHOLES_MODEL_PATH = 'template004/template004-GuideHoles.vtk'
+      self.zframeConfig = 'z004'
+      zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template004/zframe004.txt")
+    
+    with open(zframeConfigFilePath,"r") as f:
+      configFileLines = f.readlines()
 
-  # TODO: Detect whether a segment is on the border of the image and remove it
+    # Parse zFrame configuration file here to identify the dimensions and topology of the zframe
+    # Save the origins and diagonal vectors of each of the 3 sides of the zframe in an array
+    self.frameTopology = []
+    self.zFrameFiducials = []
+    self.templateHorizontalLabels = []
+    self.templateVerticalLabels = []
+    templateOriginFound = False
+    for line in configFileLines:
+      if line.startswith('Side 1') or line.startswith('Side 2'): 
+        vec = [float(s) for s in re.findall(r'-?\d+\.?\d*', line)]
+        vec.pop(0)
+        self.frameTopology.append(vec)
+      elif line.startswith('Base'):
+        vec = [float(s) for s in re.findall(r'-?\d+\.?\d*', line)]
+        self.frameTopology.append(vec)
+      elif line.startswith('Fiducial'):
+        vec = [float(s) for s in re.findall(r'(-?\d+)(?!:)', line)]
+        self.zFrameFiducials.append(vec)
+      elif line.startswith('Template origin'):
+        numbers = re.findall(r"[-+]?\d*\.\d+|\d+", line)
+        self.templateOrigin = [float(i) for i in numbers]
+        templateOriginFound = True
+      elif line.startswith('Horizontal offset'):
+        matches = re.findall(r'\b(\d+\.\d+?)\b', line)
+        self.templateHorizontalOffset = float(matches[0])
+      elif line.startswith('Vertical offset'):
+        matches = re.findall(r'\b(\d+\.\d+?)\b', line)
+        self.templateVerticalOffset = float(matches[0])
+      elif line.startswith('Horizontal labels'):
+        labels = re.findall(r'\((.*?)\)', line)
+        self.templateHorizontalLabels = [char for char in labels[0].split(',')]
+      elif line.startswith('Vertical labels'):
+        labels = re.findall(r'\((.*?)\)', line)
+        self.templateVerticalLabels = [char for char in labels[0].split(',')]
+      
+    if not templateOriginFound:
+      raise Exception("ZFrame configuration file is missing template origin")
+
+    # Convert frameTopology points to a string, for the sake of passing it as a string argument to the ZframeRegistration CLI 
+    self.frameTopologyString = ' '.join([str(elem) for elem in self.frameTopology])
+    
+    self.loadTemplateModels(ZFRAME_MODEL_PATH,'ZFrameModel',TEMPLATE_MODEL_PATH,'TemplateModel',CALIBRATOR_MODEL_PATH,'CalibratorModel',GUIDEHOLES_MODEL_PATH,'GuideHolesModel')
+
+  def loadTemplateModels(self, ZFRAME_MODEL_PATH, ZFRAME_MODEL_NAME, TEMPLATE_MODEL_PATH, TEMPLATE_MODEL_NAME, CALIBRATOR_MODEL_PATH, CALIBRATOR_MODEL_NAME, GUIDEHOLES_MODEL_PATH, GUIDEHOLES_MODEL_NAME):
+    currentFilePath = os.path.dirname(slicer.util.modulePath(self.__module__))
+
+    # All models must be created with the same origin and fit together. The module assumes that the models were created correctly.
+    # Z-Frame
+    self.removeNodeByName(ZFRAME_MODEL_NAME)
+    modelPath = os.path.join(currentFilePath, "Resources", "Templates", ZFRAME_MODEL_PATH)
+    try:
+      self.zFrameModelNode = slicer.util.loadModel(modelPath)
+    except:
+      print(f'Failed to load model from {modelPath}')
+    if self.zFrameModelNode:
+      self.zFrameModelNode.SetName(ZFRAME_MODEL_NAME)
+      modelDisplayNode = self.zFrameModelNode.GetDisplayNode()
+      modelDisplayNode.SetColor(0.0,1.0,1.0)
+      modelDisplayNode.SetSliceIntersectionThickness(2)
+      self.zFrameModelNode.SetDisplayVisibility(True)
+
+    # Template
+    self.removeNodeByName(TEMPLATE_MODEL_NAME)
+    modelPath = os.path.join(currentFilePath, "Resources", "Templates", TEMPLATE_MODEL_PATH)
+    try:
+      self.templateModelNode = slicer.util.loadModel(modelPath)
+    except:
+      print(f'Failed to load model from {modelPath}')  
+    if self.templateModelNode:    
+      self.templateModelNode.SetName(TEMPLATE_MODEL_NAME)
+      modelDisplayNode = self.templateModelNode.GetDisplayNode()
+      modelDisplayNode.SetColor(0.67,0.67,0.67)
+      modelDisplayNode.SetOpacity(0.35)
+      self.templateModelNode.SetDisplayVisibility(True)
+
+    # Calibrator
+    self.removeNodeByName(CALIBRATOR_MODEL_NAME)
+    modelPath = os.path.join(currentFilePath, "Resources", "Templates", CALIBRATOR_MODEL_PATH)
+    try:
+      self.calibratorModelNode = slicer.util.loadModel(modelPath)
+    except:
+      print(f'Failed to load model from {modelPath}')
+    if self.calibratorModelNode:  
+      self.calibratorModelNode.SetName(CALIBRATOR_MODEL_NAME)
+      modelDisplayNode = self.calibratorModelNode.GetDisplayNode()
+      modelDisplayNode.SetColor(1.0,1.0,0.0)
+      modelDisplayNode.SetOpacity(0.15)
+      modelDisplayNode.SetSliceIntersectionOpacity(0.25)
+      self.calibratorModelNode.SetDisplayVisibility(True)
+
+    # Guide Holes
+    self.removeNodeByName(GUIDEHOLES_MODEL_NAME)
+    modelPath = os.path.join(currentFilePath, "Resources", "Templates", GUIDEHOLES_MODEL_PATH)
+    try:
+      self.guideHolesModelNode = slicer.util.loadModel(modelPath)
+    except:
+      print(f'Failed to load model from {modelPath}')
+    if self.guideHolesModelNode:
+      self.guideHolesModelNode.SetName(GUIDEHOLES_MODEL_NAME)
+      modelDisplayNode = self.guideHolesModelNode.GetDisplayNode()
+      modelDisplayNode.SetColor(0.59,0.88,0.64)
+      modelDisplayNode.SetOpacity(0.05)
+      modelDisplayNode.SetSliceIntersectionOpacity(0.65)
+      self.guideHolesModelNode.SetDisplayVisibility(True)
+
   def createMaskedVolumeBySize(self, inputVolume, repair):
     loopRegistration = True
     while loopRegistration:
@@ -812,7 +997,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     except IndexError:
       print("Island processing failed")
 
-
   def countAndRepairFiducials(self, labelMapVolumeNode):
     # Returns False if redoing registration with different parameters
     if labelMapVolumeNode.GetImageData().GetScalarRange()[1] == 0:
@@ -1002,8 +1186,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     else:
       return "anomaly"
 
-
-
   def drawThickLine(self, start, end, thickness, numpy_array):
     for dx in range(-thickness//2, thickness//2+1):
       for dy in range(-thickness//2, thickness//2+1):
@@ -1025,3 +1207,181 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     center_of_mass = np.average(indices, axis=1, weights=voxels.ravel())
     return center_of_mass
     
+  # ------------------------------------- Planning -----------------------------------
+  def onAddTarget(self):
+    if self.biopsyFiducialListNode:
+      fiducialListNode = self.biopsyFiducialListNode
+    else:
+      self.removeNodeByName("Target")
+      self.biopsyFiducialListNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode", "Target")
+      self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self.onTargetAdded)
+      self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self.onTargetMoved)
+      fiducialListNode = self.biopsyFiducialListNode
+
+    slicer.modules.markups.logic().StartPlaceMode(False)
+
+    # Set the current node in the selection node
+    selectionNode = slicer.mrmlScene.GetNodeByID("vtkMRMLSelectionNodeSingleton")
+    selectionNode.SetReferenceActivePlaceNodeClassName(fiducialListNode.GetClassName())
+    selectionNode.SetActivePlaceNodeID(fiducialListNode.GetID())
+  
+  def onTargetMoved(self, caller, event):
+    # Cannot identify which changed, so change all of them
+    numFiducials = caller.GetNumberOfControlPoints()
+
+    for i in range(numFiducials):
+      # Need to recalculate all the points because of the many ways the fiducial list could've been modified
+      # if the list item exists
+      if self.targetListTableWidget.item(i, 0):
+        targetName, targetGrid, targetDepth, targetRAS = self.calculateGridCoordinates(i)
+        self.targetListTableWidget.item(i, 0).setText(targetName)
+        self.targetListTableWidget.item(i, 1).setText(targetGrid)
+        self.targetListTableWidget.item(i, 2).setText(f'{targetDepth:.2f} cm')
+        self.targetListTableWidget.item(i, 3).setText(f'[{targetRAS[0]:.2f}, {targetRAS[1]:.2f}, {targetRAS[2]:.2f}]')
+  
+  def onTargetAdded(self, caller, event):
+    newFiducialIndex = self.biopsyFiducialListNode.GetNumberOfControlPoints() - 1
+
+    rowCount = self.targetListTableWidget.rowCount
+    if not (rowCount == newFiducialIndex):
+      print("Target list count does not match table row count")
+      return
+    self.targetListTableWidget.insertRow(newFiducialIndex)
+
+    targetName, targetGrid, targetDepth, targetRAS = self.calculateGridCoordinates(newFiducialIndex)
+    
+    # Update table with Target name item
+    targetItem = qt.QTableWidgetItem(targetName)
+    targetItem.setTextAlignment(qt.Qt.AlignVCenter | qt.Qt.AlignHCenter)
+    targetItem.setFlags(targetItem.flags() | qt.Qt.ItemIsEditable)
+    self.targetListTableWidget.setItem(newFiducialIndex,  0, targetItem)
+
+    # Update table with Grid coordinate
+    gridItem = qt.QTableWidgetItem(targetGrid)
+    gridItem.setTextAlignment(qt.Qt.AlignVCenter | qt.Qt.AlignHCenter)
+    gridItem.setFlags(gridItem.flags() & ~qt.Qt.ItemIsEditable)
+    self.targetListTableWidget.setItem(newFiducialIndex,  1, gridItem)
+
+    # Update table with Depth
+    depthItem = qt.QTableWidgetItem(f'{targetDepth:.2f} cm')
+    depthItem.setTextAlignment(qt.Qt.AlignVCenter | qt.Qt.AlignHCenter)
+    depthItem.setFlags(depthItem.flags() & ~qt.Qt.ItemIsEditable)
+    self.targetListTableWidget.setItem(newFiducialIndex,  2, depthItem)
+
+    # Update table with RAS coordinates
+    rasItem = qt.QTableWidgetItem(f'[{targetRAS[0]:.2f}, {targetRAS[1]:.2f}, {targetRAS[2]:.2f}]')
+    rasItem.setTextAlignment(qt.Qt.AlignVCenter | qt.Qt.AlignHCenter)
+    rasItem.setFlags(rasItem.flags() & ~qt.Qt.ItemIsEditable)
+    self.targetListTableWidget.setItem(newFiducialIndex, 3, rasItem)
+
+    # Update table with Delete button
+    # Delete by deleting the index in the fiducial list that matches the table item, easy
+    deleteItem = qt.QPushButton()
+    moduleDir = os.path.dirname(slicer.util.modulePath(self.__module__))
+    deleteIconPath = os.path.join(moduleDir, 'Resources/Icons', 'MarkupsDelete.png')
+    deleteIcon = qt.QIcon(deleteIconPath)
+    deleteItem.setIcon(deleteIcon)
+    deleteItem.connect('clicked()', lambda: self.onDeleteTarget(deleteItem))
+    self.targetListTableWidget.setCellWidget(newFiducialIndex, 4, deleteItem)
+
+  def onDeleteTarget(self, button):
+    for index in range(self.targetListTableWidget.rowCount):
+      if self.targetListTableWidget.cellWidget(index, 4) == button:
+        self.biopsyFiducialListNode.RemoveNthControlPoint(index)
+        self.targetListTableWidget.removeRow(index)
+
+        # Delete trajectory model
+        shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+        sceneItemID = shNode.GetSceneItemID()
+        trajectoryFolderItemID = shNode.GetItemChildWithName(sceneItemID, "TrajectoryModels")
+        trajectoryChildren = vtk.vtkIdList()
+        shNode.GetItemChildren(trajectoryFolderItemID, trajectoryChildren)
+        shNode.RemoveItem(shNode.GetItemByPositionUnderParent(trajectoryFolderItemID,index))
+        return
+
+  def calculateGridCoordinates(self, index):
+    fiducialNode = self.biopsyFiducialListNode
+
+    # Target Name
+    targetName = self.biopsyFiducialListNode.GetNthControlPointLabel(index)
+
+    # Target RAS
+    targetRAS = [0, 0, 0]
+    fiducialNode.GetNthControlPointPosition(index, targetRAS)
+
+    # Target Grid
+    # TODO: Add a check for when it's outside of the target volume? But maybe not; sometimes done intentionally
+    targetGrid = None
+    closestHole = None
+    inverseMatrix = vtk.vtkMatrix4x4()
+    self.ZFrameCalibrationTransformNode.GetMatrixTransformToParent(inverseMatrix)
+    inverseMatrix.Invert()
+    targetIJK = inverseMatrix.MultiplyPoint(targetRAS + [1])[:3]
+    min_distance = math.inf
+    for x, horizontalLabel in enumerate(self.templateHorizontalLabels):  # number of holes horizontally
+      for y, verticalLabel in enumerate(self.templateVerticalLabels):  # number of holes vertically
+        holeCenter = [self.templateOrigin[0] - (x * self.templateHorizontalOffset), self.templateOrigin[1] - (y * self.templateVerticalOffset)]
+        distance = math.sqrt((holeCenter[0] - targetIJK[0]) ** 2 + (holeCenter[1] - targetIJK[1]) ** 2)
+        if distance < min_distance:
+          min_distance = distance
+          closestHole = holeCenter
+          targetGrid = f'{horizontalLabel}, {verticalLabel}'
+
+    # Target Depth (cm)
+    targetDepth = abs(targetIJK[2] - self.templateOrigin[2]) / 10
+
+    # Update trajectory model
+    shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+    sceneItemID = shNode.GetSceneItemID()
+    trajectoryFolderItemID = shNode.GetItemChildWithName(sceneItemID, "TrajectoryModels")
+    if trajectoryFolderItemID == 0:
+      trajectoryFolderItemID = shNode.CreateFolderItem(sceneItemID , "TrajectoryModels")
+    trajectoryChildren = vtk.vtkIdList()
+    shNode.GetItemChildren(trajectoryFolderItemID, trajectoryChildren)
+
+    numModelsToAdd = fiducialNode.GetNumberOfControlPoints() - trajectoryChildren.GetNumberOfIds()
+    modelName = f'{targetName}_Trajectory'
+    if numModelsToAdd > 0:
+      modelNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelNode', modelName)
+      modelNode.CreateDefaultDisplayNodes()
+      modelNode.SetAndObserveTransformNodeID(self.ZFrameCalibrationTransformNode.GetID())
+      shNode.CreateItem(trajectoryFolderItemID, modelNode)
+    childModelNode = shNode.GetItemDataNode(shNode.GetItemByPositionUnderParent(trajectoryFolderItemID, index))
+    childModelNode.SetName(modelName)
+
+    cylinder = vtk.vtkCylinderSource()
+    cylinder.SetRadius(1.5)
+    cylinder.SetHeight(250)
+    cylinder.SetResolution(72)
+    cylinder.Update()
+
+    modelMatrix = vtk.vtkMatrix4x4()
+    modelMatrix.Identity()
+    modelMatrix.SetElement(0, 0, 1)
+    modelMatrix.SetElement(1, 1, 0)
+    modelMatrix.SetElement(2, 2, 0)
+    modelMatrix.SetElement(1, 2, 1)
+    modelMatrix.SetElement(2, 1, -1)
+    modelMatrix.SetElement(0, 3, closestHole[0])
+    modelMatrix.SetElement(1, 3, closestHole[1])
+    modelMatrix.SetElement(2, 3, self.templateOrigin[2] + 125)
+    modelTransform = vtk.vtkTransform()
+    modelTransform.SetMatrix(modelMatrix)
+    modelTransformFilter = vtk.vtkTransformPolyDataFilter()
+    modelTransformFilter.SetInputConnection(cylinder.GetOutputPort())
+    modelTransformFilter.SetTransform(modelTransform)
+    modelTransformFilter.Update()
+
+    childModelNode.SetAndObservePolyData(modelTransformFilter.GetOutput())
+    childModelNode.GetDisplayNode().SetVisibility2D(True)
+    childModelNode.GetDisplayNode().SetSliceIntersectionOpacity(0.6)
+    childModelNode.GetDisplayNode().SetSliceIntersectionThickness(2)
+    childModelNode.GetDisplayNode().SetColor(1,0,1)
+    
+    return targetName, targetGrid, targetDepth, targetRAS
+  
+  def onTargetListItemChanged(self, tableItem):
+    # If target name item
+    if tableItem.column() != 0:
+      return
+    self.biopsyFiducialListNode.SetNthControlPointLabel(tableItem.row(), tableItem.text())
