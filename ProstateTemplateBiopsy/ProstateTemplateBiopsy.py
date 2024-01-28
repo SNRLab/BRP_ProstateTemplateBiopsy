@@ -24,7 +24,11 @@ import re
 import math
 import numpy as np
 # pip_install('scikit-image')
+# pip_install('PyPDF2')
+# pip_install('reportlab')
+# pip_install('io')
 from skimage.draw import line_nd
+
 from SlicerDevelopmentToolboxUtils.helpers import SmartDICOMReceiver
 from SlicerDevelopmentToolboxUtils.events import SlicerDevelopmentToolboxEvents
 from SlicerDevelopmentToolboxUtils.widgets import IncomingDataWindow, CustomStatusProgressbar
@@ -66,6 +70,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     ScriptedLoadableModuleWidget.__init__(self, parent)
     self.ignoredVolumeNames = ['MaskedCalibrationVolume', 'MaskedCalibrationLabelMapVolume', 'TempLabelMapVolume']
     self.imageRoles = ['N/A', 'CALIBRATION', 'PLANNING', 'CONFIRMATION']
+    self.caseDirPath = None
+    self.caseDICOMPath = None
     self.zFrameModelNode = None
     self.templateModelNode = None
     self.calibratorModelNode = None
@@ -75,6 +81,11 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.templateVerticalOffset = 5
     self.templateHorizontalLabels = []
     self.templateVerticalLabels = []
+    self.templateWorksheetPath = ''
+    self.templateWorksheetOverlayPath = ''
+    self.worksheetOrigin = [238,404]
+    self.worksheetHorizontalOffset = 26
+    self.worksheetVerticalOffset = 26
     self.removeNodeByName('ZFrameTransform')
     # TODO: Cleanup function to allow for a Reload to truly restart a case?
     self.ZFrameCalibrationTransformNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", "ZFrameTransform")
@@ -96,9 +107,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     initializeCollapsibleButton.text = "Connection"
     self.layout.addWidget(initializeCollapsibleButton)
     initializeLayout = qt.QFormLayout(initializeCollapsibleButton)
-
-    self.caseDirPath = None
-    self.caseDICOMPath = None
 
     self.casesPathBox = qt.QLineEdit("C:/w/data/ProstateBiopsyModuleTest/Cases")
     self.casesPathBox.setReadOnly(True)
@@ -284,6 +292,22 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.targetListTableWidget.setSizePolicy(qt.QSizePolicy.MinimumExpanding, qt.QSizePolicy.Minimum)
     self.targetListTableWidget.setColumnWidth(4, 10)
     self.targetListTableWidget.itemChanged.connect(self.onTargetListItemChanged)
+
+    # worksheetWidget = qt.QWidget()
+    # planningLayout.addWidget(worksheetWidget)
+    # worksheetLayout = qt.QHBoxLayout(worksheetWidget)
+
+    generateWorksheetFont = qt.QFont()
+    generateWorksheetFont.setPointSize(14)
+    generateWorksheetFont.setBold(False)
+
+    self.generateWorksheetButton = qt.QPushButton("Generate Worksheet")
+    self.generateWorksheetButton.setFont(generateWorksheetFont)
+    self.generateWorksheetButton.toolTip = "Generate PDF for worksheet"
+    self.generateWorksheetButton.enabled = True
+    self.generateWorksheetButton.connect('clicked()', self.onGenerateWorksheet)
+    planningLayout.addWidget(self.generateWorksheetButton)
+    # worksheetLayout.addWidget(self.generateWorksheetButton)
     # -------------------------------------- ----------  --------------------------------------
     # Add vertical spacer
     self.layout.addStretch(1)
@@ -667,6 +691,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       TEMPLATE_MODEL_PATH = 'template001/template001.vtk'
       CALIBRATOR_MODEL_PATH = 'template001/template001-Calibrator.vtk'
       GUIDEHOLES_MODEL_PATH = 'template001/template001-GuideHoles.vtk'
+      self.templateWorksheetPath = 'template001/BiopsyWorksheet.pdf'
+      self.templateWorksheetOverlayPath = 'template001/BiopsyWorksheet_Overlay.pdf'
       self.zframeConfig = 'z001'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template001/zframe001.txt")
     elif self.configFileSelectionBox.currentIndex == 1:
@@ -674,6 +700,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       TEMPLATE_MODEL_PATH = 'template002/template002.vtk'
       CALIBRATOR_MODEL_PATH = 'template002/template002-Calibrator.vtk'
       GUIDEHOLES_MODEL_PATH = 'template002/template002-GuideHoles.vtk'
+      self.templateWorksheetPath = 'template002/BiopsyWorksheet.pdf'
+      self.templateWorksheetOverlayPath = 'template002/BiopsyWorksheet_Overlay.pdf'
       self.zframeConfig = 'z002'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template002/zframe002.txt")
     elif self.configFileSelectionBox.currentIndex == 2:
@@ -681,6 +709,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       TEMPLATE_MODEL_PATH = 'template003/template003.vtk'
       CALIBRATOR_MODEL_PATH = 'template003/template003-Calibrator.vtk'
       GUIDEHOLES_MODEL_PATH = 'template003/template003-GuideHoles.vtk'
+      self.templateWorksheetPath = 'template003/BiopsyWorksheet.pdf'
+      self.templateWorksheetOverlayPath = 'template003/BiopsyWorksheet_Overlay.pdf'
       self.zframeConfig = 'z003'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template003/zframe003.txt")
     else: #self.configFileSelectionBox.currentIndex == 3:
@@ -688,6 +718,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       TEMPLATE_MODEL_PATH = 'template004/template004.vtk'
       CALIBRATOR_MODEL_PATH = 'template004/template004-Calibrator.vtk'
       GUIDEHOLES_MODEL_PATH = 'template004/template004-GuideHoles.vtk'
+      self.templateWorksheetPath = 'template004/BiopsyWorksheet.pdf'
+      self.templateWorksheetOverlayPath = 'template004/BiopsyWorksheet_Overlay.pdf'
       self.zframeConfig = 'z004'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template004/zframe004.txt")
     
@@ -700,6 +732,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.zFrameFiducials = []
     self.templateHorizontalLabels = []
     self.templateVerticalLabels = []
+    self.worksheetOrigin = []
     templateOriginFound = False
     for line in configFileLines:
       if line.startswith('Side 1') or line.startswith('Side 2'): 
@@ -728,6 +761,15 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       elif line.startswith('Vertical labels'):
         labels = re.findall(r'\((.*?)\)', line)
         self.templateVerticalLabels = [char for char in labels[0].split(',')]
+      elif line.startswith('Worksheet origin'):
+        matches = re.findall(r'[-+]?\d*\.\d+|\d+', line)
+        self.worksheetOrigin.append([float(matches[1]), float(matches[2])])
+      elif line.startswith('Worksheet horizontal offset'):
+        match = re.findall(r'\b(\d+\.\d+?)\b', line)
+        self.worksheetHorizontalOffset = float(match[0])
+      elif line.startswith('Worksheet vertical offset'):
+        match = re.findall(r'\b(\d+\.\d+?)\b', line)
+        self.worksheetVerticalOffset = float(match[0])
       
     if not templateOriginFound:
       raise Exception("ZFrame configuration file is missing template origin")
@@ -1250,22 +1292,29 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
 
     targetName, targetGrid, targetDepth, targetRAS = self.calculateGridCoordinates(newFiducialIndex)
     
+    targetListFont = qt.QFont()
+    targetListFont.setPointSize(18)
+    targetListFont.setBold(False)
+
     # Update table with Target name item
     targetItem = qt.QTableWidgetItem(targetName)
     targetItem.setTextAlignment(qt.Qt.AlignVCenter | qt.Qt.AlignHCenter)
     targetItem.setFlags(targetItem.flags() | qt.Qt.ItemIsEditable)
+    targetItem.setFont(targetListFont)
     self.targetListTableWidget.setItem(newFiducialIndex,  0, targetItem)
 
     # Update table with Grid coordinate
     gridItem = qt.QTableWidgetItem(targetGrid)
     gridItem.setTextAlignment(qt.Qt.AlignVCenter | qt.Qt.AlignHCenter)
     gridItem.setFlags(gridItem.flags() & ~qt.Qt.ItemIsEditable)
+    gridItem.setFont(targetListFont)
     self.targetListTableWidget.setItem(newFiducialIndex,  1, gridItem)
 
     # Update table with Depth
     depthItem = qt.QTableWidgetItem(f'{targetDepth:.2f} cm')
     depthItem.setTextAlignment(qt.Qt.AlignVCenter | qt.Qt.AlignHCenter)
     depthItem.setFlags(depthItem.flags() & ~qt.Qt.ItemIsEditable)
+    depthItem.setFont(targetListFont)
     self.targetListTableWidget.setItem(newFiducialIndex,  2, depthItem)
 
     # Update table with RAS coordinates
@@ -1385,3 +1434,80 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     if tableItem.column() != 0:
       return
     self.biopsyFiducialListNode.SetNthControlPointLabel(tableItem.row(), tableItem.text())
+
+  def onGenerateWorksheet(self):
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import letter
+    from PyPDF2 import PdfWriter, PdfReader
+    from io import BytesIO
+
+    numberOfSheets = math.ceil(self.targetListTableWidget.rowCount / 2)
+    currentFilePath = os.path.dirname(slicer.util.modulePath(self.__module__))
+    blankWorksheetPath = os.path.join(currentFilePath, "Resources", "Templates", self.templateWorksheetPath)
+    blankOverlayWorksheetPath = os.path.join(currentFilePath, "Resources", "Templates", self.templateWorksheetOverlayPath)
+    newWorksheetPath = f'{self.caseDirPath}/BiopsyWorksheet_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
+    newWorksheetOverlayPath =f'{self.caseDirPath}/BiopsyWorksheetOverlay_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
+    #newWorksheetPath = f'C:/w/data/ProstateBiopsyModuleTest/RegTest/BiopsyWorksheet_test.pdf'
+    #newWorksheetOverlayPath = f'C:/w/data/ProstateBiopsyModuleTest/RegTest/BiopsyWorksheetOverlay_test.pdf'
+    with open(blankWorksheetPath, "rb") as f, open(blankOverlayWorksheetPath, "rb") as f_overlay:
+      reader = PdfReader(f)
+      reader_overlay = PdfReader(f_overlay)
+      writer = PdfWriter()
+      writer_overlay = PdfWriter()
+    
+      for sheetIndex in range(numberOfSheets):
+        page = reader.pages[0]
+        page_overlay = reader_overlay.pages[0]
+        packet = BytesIO()
+        can = canvas.Canvas(packet, pagesize=letter)
+
+        rowIndex = sheetIndex * 2
+        targetName = self.targetListTableWidget.item(rowIndex, 0).text()
+        targetGrid = self.targetListTableWidget.item(rowIndex, 1).text()
+        targetDepth = self.targetListTableWidget.item(rowIndex, 2).text()
+        
+        #writer.update_page_form_field_values(page, {"TARGET_1": targetName})
+        writer.update_page_form_field_values(page, {"GRID_1": targetGrid})
+        writer.update_page_form_field_values(page, {"DEPTH_1": targetDepth})
+        #writer_overlay.update_page_form_field_values(page_overlay, {"TARGET_1": targetName})
+        writer_overlay.update_page_form_field_values(page_overlay, {"GRID_1": targetGrid})
+        writer_overlay.update_page_form_field_values(page_overlay, {"DEPTH_1": targetDepth})
+
+        gridMatches = re.findall(r'(\w+)', targetGrid)
+        worksheetHole_1 = [self.worksheetOrigin[0][0] + (self.templateHorizontalLabels.index(gridMatches[0]) * self.worksheetHorizontalOffset), self.worksheetOrigin[0][1] - (self.templateVerticalLabels.index(gridMatches[1]) * self.worksheetVerticalOffset)]
+
+        # Draw a cross
+        can.line(worksheetHole_1[0]-7, worksheetHole_1[1]+7, worksheetHole_1[0]+7, worksheetHole_1[1]-7)
+        can.line(worksheetHole_1[0]-7, worksheetHole_1[1]-7, worksheetHole_1[0]+7, worksheetHole_1[1]+7)
+        
+        rowIndex += 1
+        if rowIndex < self.targetListTableWidget.rowCount:
+          targetName = self.targetListTableWidget.item(rowIndex, 0).text()
+          targetGrid = self.targetListTableWidget.item(rowIndex, 1).text()
+          targetDepth = self.targetListTableWidget.item(rowIndex, 2).text()
+
+          #writer.update_page_form_field_values(page, {"TARGET_2": targetName})
+          writer.update_page_form_field_values(page, {"GRID_2": targetGrid})
+          writer.update_page_form_field_values(page, {"DEPTH_2": targetDepth})
+          #writer_overlay.update_page_form_field_values(page_overlay, {"TARGET_2": targetName})
+          writer_overlay.update_page_form_field_values(page_overlay, {"GRID_2": targetGrid})
+          writer_overlay.update_page_form_field_values(page_overlay, {"DEPTH_2": targetDepth})
+
+          gridMatches = re.findall(r'(\w+)', targetGrid)
+          worksheetHole_2 = [self.worksheetOrigin[1][0] + (self.templateHorizontalLabels.index(gridMatches[0]) * self.worksheetHorizontalOffset), self.worksheetOrigin[1][1] - (self.templateVerticalLabels.index(gridMatches[1]) * self.worksheetVerticalOffset)]
+
+          # Draw a cross
+          can.line(worksheetHole_2[0]-7, worksheetHole_2[1]+7, worksheetHole_2[0]+7, worksheetHole_2[1]-7)
+          can.line(worksheetHole_2[0]-7, worksheetHole_2[1]-7, worksheetHole_2[0]+7, worksheetHole_2[1]+7)
+        
+        can.save()
+        packet.seek(0)
+        draw_pdf = PdfReader(packet)
+        page.merge_page(draw_pdf.pages[0])
+        page_overlay.merge_page(draw_pdf.pages[0])
+        writer.add_page(page)
+        writer_overlay.add_page(page_overlay)
+    
+    with open(newWorksheetPath, "wb") as outputStream, open(newWorksheetOverlayPath, "wb") as outputStream_overlay:
+      writer.write(outputStream)
+      writer_overlay.write(outputStream_overlay)
