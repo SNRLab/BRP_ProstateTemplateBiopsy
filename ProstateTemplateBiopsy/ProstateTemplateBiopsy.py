@@ -13,7 +13,6 @@
 # pip_install('scikit-image')
 # pip_install('PyPDF2')
 # pip_install('reportlab')
-# pip_install('io')
 
 import os
 import vtk, qt, ctk, slicer, ast
@@ -26,21 +25,21 @@ import re
 import math
 import ast
 import numpy as np
-from skimage.draw import line_nd
+import configparser
 
-from SlicerDevelopmentToolboxUtils.helpers import SmartDICOMReceiver
-from SlicerDevelopmentToolboxUtils.events import SlicerDevelopmentToolboxEvents
-from SlicerDevelopmentToolboxUtils.widgets import IncomingDataWindow, CustomStatusProgressbar
+# To draw synthetic fiducials for fiducial image repair
+try:
+  from skimage.draw import line_nd
+except:
+  slicer.util.pip_install('scikit-image')
+  from skimage.draw import line_nd
+
 from SlicerDevelopmentToolboxUtils.constants import DICOMTAGS, STYLE
 from SlicerDevelopmentToolboxUtils.exceptions import DICOMValueError, UnknownSeriesError
 from SlicerDevelopmentToolboxUtils.module.session import StepBasedSession
 from DICOMLib import DICOMUtils
 
 class ProstateTemplateBiopsy(ScriptedLoadableModule):
-  """Uses ScriptedLoadableModule base class, available at:
-  https://github.com/Slicer/Slicer/blob/master/Bakse/Python/slicer/ScriptedLoadableModule.py
-  """
-
   def __init__(self, parent):
     ScriptedLoadableModule.__init__(self, parent)
     self.parent.title = "Prostate Template Biopsy"
@@ -48,8 +47,8 @@ class ProstateTemplateBiopsy(ScriptedLoadableModule):
     self.parent.dependencies = []
     self.parent.contributors = ["Franklin King (SNR)"]
     self.parent.helpText = """
+    <a href=\"https://github.com/SNRLab/BRP_ProstateTemplateBiopsy">https://github.com/SNRLab/BRP_ProstateTemplateBiopsy</a>
 """
-    self.parent.helpText += self.getDefaultModuleDocumentationLink()
     self.parent.acknowledgementText = """
 """
     # Set module icon from Resources/Icons/<ModuleName>.png
@@ -61,10 +60,6 @@ class ProstateTemplateBiopsy(ScriptedLoadableModule):
         break
 
 class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
-  """Uses ScriptedLoadableModuleWidget base class, available at:
-  https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
-  """
-
   def __init__(self, parent=None):
     ScriptedLoadableModuleWidget.__init__(self, parent)
     self.ignoredVolumeNames = ['MaskedCalibrationVolume', 'MaskedCalibrationLabelMapVolume', 'TempLabelMapVolume']
@@ -97,6 +92,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self.onTargetAdded)
     self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self.onTargetMoved)
 
+    self.registrationSliceWidget = None
     self.loadedFiles = []
     self.filesToBeLoaded = []
     self.observationTimer = qt.QTimer()
@@ -105,7 +101,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
 
     self.seriesList = []
     self.seriesTimeStamps = dict()
-    slicer.mrmlScene.AddObserver(slicer.mrmlScene.NodeAddedEvent,self.onNodeAddedEvent)
+    self.nodeAddedObserver = slicer.mrmlScene.AddObserver(slicer.mrmlScene.NodeAddedEvent,self.onNodeAddedEvent)
 
     slicer.util.setDataProbeVisible(False)
 
@@ -118,14 +114,14 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
   def setup(self):
     ScriptedLoadableModuleWidget.setup(self)
     moduleDir = os.path.dirname(slicer.util.modulePath(self.__module__))
+    defaultsFilePath = os.path.join(moduleDir, "Resources/Defaults.ini")
+    config = configparser.ConfigParser()
+    config.read(defaultsFilePath)
 
     # ------------------------------------ Initialization UI ---------------------------------------
-    # TODO: 
     # - Change port to 104 [Port can only be changed in DICOM module UI under Query and Retrieve]
-    # - Set Default values using a config file
     self.initializeCollapsibleButton = ctk.ctkCollapsibleButton()
     self.initializeCollapsibleButton.text = "Connection"
-    #initializeCollapsibleButton.setStyleSheet("ctkCollapsibleButton {background-color: #16417C}")
     self.initializeCollapsibleButton.collapsed = False
     self.layout.addWidget(self.initializeCollapsibleButton)
     initializeLayout = qt.QFormLayout(self.initializeCollapsibleButton)
@@ -141,7 +137,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.initializeButton.connect('clicked()', self.initializeCase)
     initializeLayout.addRow(self.initializeButton)
 
-    self.casesPathBox = qt.QLineEdit("C:/w/data/ProstateBiopsyModuleTest/Cases")
+    self.casesPathBox = qt.QLineEdit(config['START']['cases_path'])
     self.casesPathBox.setReadOnly(True)
     self.casesPathBrowseButton = qt.QPushButton("...")
     self.casesPathBrowseButton.clicked.connect(self.select_directory)
@@ -160,7 +156,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     # - Switch images depending on clicking an image (can have a button for it on each row)
     self.imageListCollapsibleButton = ctk.ctkCollapsibleButton()
     self.imageListCollapsibleButton.text = "Images"
-    #imageListCollapsibleButton.setStyleSheet("ctkCollapsibleButton {background-color: #16417C}")
     self.imageListCollapsibleButton.collapsed = True
     self.layout.addWidget(self.imageListCollapsibleButton)
     imageListLayout = qt.QVBoxLayout(self.imageListCollapsibleButton)
@@ -177,10 +172,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     # ---------------------------------- Registration UI --------------------------------------
     # TODO: 
     # - Sometimes Transform sliders have a bug that cause one slider to change another when clicking directly towards it; Might happen with switching transforms
-    # - Load in defaults via config file (and make sure to use that in the threshold adjust code)
     self.registrationCollapsibleButton = ctk.ctkCollapsibleButton()
     self.registrationCollapsibleButton.text = "Registration"
-    #registrationCollapsibleButton.setStyleSheet("ctkCollapsibleButton {background-color: #16417C}")\
     self.registrationCollapsibleButton.collapsed = True
     self.layout.addWidget(self.registrationCollapsibleButton)
     registrationLayout = qt.QFormLayout(self.registrationCollapsibleButton)
@@ -196,9 +189,17 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.registrationButton.connect('clicked()', self.onRegister)
     registrationLayout.addRow(self.registrationButton)
 
+    validRegistrationFont = qt.QFont()
+    validRegistrationFont.setPointSize(18)
+    validRegistrationFont.setBold(False)
+    self.validRegistrationLabel = qt.QLabel()
+    self.validRegistrationLabel.text = ""
+    self.validRegistrationLabel.setAlignment(qt.Qt.AlignCenter)
+    registrationLayout.addRow(self.validRegistrationLabel)
+
     self.configFileSelectionBox = qt.QComboBox()
     self.configFileSelectionBox.addItems(['Template 001 - Seven Fiducials', 'Template 002 - Nine Fiducials', 'Template 003 - BRP Robot - Nine Fiducials', 'Template 004 - Wide Z-frame - Seven Fiducials'])
-    self.configFileSelectionBox.setCurrentIndex(3)
+    self.configFileSelectionBox.setCurrentIndex(config['REGISTRATION'].getint('template_index'))
     registrationLayout.addRow('ZFrame Configuration:', self.configFileSelectionBox)
 
     registrationParametersGroupBox = ctk.ctkCollapsibleGroupBox()
@@ -207,14 +208,14 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     registrationParametersLayout = qt.QFormLayout(registrationParametersGroupBox)
     registrationLayout.addRow(registrationParametersGroupBox)
 
-    self.defaultThresholdPercentage = 0.08
+    self.defaultThresholdPercentage = config['REGISTRATION'].getfloat('threshold_percentage')
     self.thresholdSliderWidget = ctk.ctkSliderWidget()
     self.thresholdSliderWidget.setToolTip("Set range for threshold percentage for isolating registration fiducial markers")
     self.thresholdSliderWidget.setDecimals(2)
     self.thresholdSliderWidget.minimum = 0.00
     self.thresholdSliderWidget.maximum = 1.00
     self.thresholdSliderWidget.singleStep = 0.01
-    self.thresholdSliderWidget.value = 0.08
+    self.thresholdSliderWidget.value = self.defaultThresholdPercentage
     registrationParametersLayout.addRow("Threshold Percentage:", self.thresholdSliderWidget)
 
     self.fiducialSizeSliderWidget = ctk.ctkRangeWidget()
@@ -223,8 +224,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.fiducialSizeSliderWidget.maximum = 5000
     self.fiducialSizeSliderWidget.minimum = 0
     self.fiducialSizeSliderWidget.singleStep = 1
-    self.fiducialSizeSliderWidget.maximumValue = 2000
-    self.fiducialSizeSliderWidget.minimumValue = 300
+    self.fiducialSizeSliderWidget.maximumValue = config['REGISTRATION'].getint('fiducial_size_maxValue')
+    self.fiducialSizeSliderWidget.minimumValue = config['REGISTRATION'].getint('fiducial_size_minValue')
     registrationParametersLayout.addRow("Fiducial Size Range:", self.fiducialSizeSliderWidget)
 
     self.borderMarginSliderWidget = ctk.ctkSliderWidget()
@@ -233,57 +234,62 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.borderMarginSliderWidget.minimum = 0
     self.borderMarginSliderWidget.maximum = 50
     self.borderMarginSliderWidget.singleStep = 1
-    self.borderMarginSliderWidget.value = 15
+    self.borderMarginSliderWidget.value = config['REGISTRATION'].getint('border_margin')
     registrationParametersLayout.addRow("Border Removal Margin:", self.borderMarginSliderWidget)
 
     self.removeOrientationCheckBox = qt.QCheckBox("Remove orientation from registration transform")
-    self.removeOrientationCheckBox.setChecked(True)
+    self.removeOrientationCheckBox.setChecked(config['REGISTRATION'].getboolean('remove_orientation'))
     registrationParametersLayout.addRow(self.removeOrientationCheckBox)
 
     self.removeBorderIslandsCheckBox = qt.QCheckBox("Remove segment islands on border of volume")
-    self.removeBorderIslandsCheckBox.setChecked(True)
+    self.removeBorderIslandsCheckBox.setChecked(config['REGISTRATION'].getboolean('remove_border_islands'))
     registrationParametersLayout.addRow(self.removeBorderIslandsCheckBox)
 
     self.repairFiducialImageCheckBox = qt.QCheckBox("Attempt repair of fiducial image")
-    self.repairFiducialImageCheckBox.setChecked(True)
+    self.repairFiducialImageCheckBox.setChecked(config['REGISTRATION'].getboolean('repair_fiducials'))
     registrationParametersLayout.addRow(self.repairFiducialImageCheckBox)
 
     self.retryFailedRegistrationCheckBox = qt.QCheckBox("Re-attempt registration with different settings upon failure")
-    self.retryFailedRegistrationCheckBox.setChecked(True)
+    self.retryFailedRegistrationCheckBox.setChecked(config['REGISTRATION'].getboolean('retry_failed'))
     registrationParametersLayout.addRow(self.retryFailedRegistrationCheckBox)
 
     self.manualRegistrationGroupBox = ctk.ctkCollapsibleGroupBox()
     self.manualRegistrationGroupBox.title = "Manual Registration"
     self.manualRegistrationGroupBox.collapsed = True
-    manualRregistrationLayout = qt.QVBoxLayout(self.manualRegistrationGroupBox)
+    manualRegistrationLayout = qt.QVBoxLayout(self.manualRegistrationGroupBox)
     registrationLayout.addRow(self.manualRegistrationGroupBox)
 
     self.manualRegistrationTransformSliders = slicer.qMRMLTransformSliders()
     self.manualRegistrationTransformSliders.setWindowTitle("Translation")
     self.manualRegistrationTransformSliders.TypeOfTransform = slicer.qMRMLTransformSliders.TRANSLATION
     self.manualRegistrationTransformSliders.setDecimals(3)
-    manualRregistrationLayout.addWidget(self.manualRegistrationTransformSliders)
+    manualRegistrationLayout.addWidget(self.manualRegistrationTransformSliders)
 
     self.manualRegistrationRotationSliders = slicer.qMRMLTransformSliders()
     self.manualRegistrationRotationSliders.setWindowTitle("Rotation")
     self.manualRegistrationRotationSliders.TypeOfTransform = slicer.qMRMLTransformSliders.ROTATION
     self.manualRegistrationRotationSliders.setDecimals(3)
-    manualRregistrationLayout.addWidget(self.manualRegistrationRotationSliders)
+    manualRegistrationLayout.addWidget(self.manualRegistrationRotationSliders)
+
+    manualRegistrationFooterWidget = qt.QWidget()
+    manualRegistrationLayout.addWidget(manualRegistrationFooterWidget)
+    manualRegistrationFooterLayout = qt.QHBoxLayout(manualRegistrationFooterWidget)
 
     self.identityButton = qt.QPushButton("Identity")
     self.identityButton.toolTip = "Set Z-Frame calibration matrix to be Identity"
     self.identityButton.setMaximumWidth(100)
     self.identityButton.connect('clicked()', self.onIdentity)
-    manualRregistrationLayout.addWidget(self.identityButton)
+    manualRegistrationFooterLayout.addWidget(self.identityButton)
 
     manualRegisterFont = qt.QFont()
-    manualRegisterFont.setPointSize(14)
+    manualRegisterFont.setPointSize(12)
     manualRegisterFont.setBold(False)
     useManualRegistrationButton = qt.QPushButton("Accept Manual Registration")
     useManualRegistrationButton.setStyleSheet("QPushButton {background-color: #16417C}")
+    useManualRegistrationButton.setFont(manualRegisterFont)
     useManualRegistrationButton.toolTip = "Flag module to accept manual registration"
     useManualRegistrationButton.connect('clicked()', self.onUseManualRegistration)
-    manualRregistrationLayout.addWidget(useManualRegistrationButton)
+    manualRegistrationFooterLayout.addWidget(useManualRegistrationButton)
 
     self.manualRegistrationTransformSliders.setMRMLTransformNode(self.ZFrameCalibrationTransformNode)
     self.manualRegistrationRotationSliders.setMRMLTransformNode(self.ZFrameCalibrationTransformNode)
@@ -292,7 +298,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     # ------------------------------------- Planning UI --------------------------------------
     self.planningCollapsibleButton = ctk.ctkCollapsibleButton()
     self.planningCollapsibleButton.text = "Planning"
-    #planningCollapsibleButton.setStyleSheet("ctkCollapsibleButton {background-color: #16417C}")
     self.planningCollapsibleButton.collapsed = True
     self.layout.addWidget(self.planningCollapsibleButton)
     planningLayout = qt.QVBoxLayout(self.planningCollapsibleButton)
@@ -326,13 +331,11 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     generateWorksheetFont.setPointSize(14)
     generateWorksheetFont.setBold(False)
     self.generateWorksheetButton = qt.QPushButton("Generate Worksheet")
-    #self.generateWorksheetButton.setStyleSheet("QPushButton {background-color: #16417C}")
     self.generateWorksheetButton.setFont(generateWorksheetFont)
     self.generateWorksheetButton.toolTip = "Generate PDF for worksheet"
     self.generateWorksheetButton.enabled = True
     self.generateWorksheetButton.connect('clicked()', self.onGenerateWorksheet)
     planningLayout.addWidget(self.generateWorksheetButton)
-    # worksheetLayout.addWidget(self.generateWorksheetButton)
     # -------------------------------------- ----------  --------------------------------------
     line = qt.QFrame()
     line.setFrameShape(qt.QFrame.HLine)
@@ -370,18 +373,17 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.toggleGuideButton.setIcon(guideIcon)
     self.toggleGuideButton.toolTip = "Toggle guide hole visibility"
     self.toggleGuideButton.setCheckable(True)
-    self.toggleGuideButton.setChecked(True)
+    self.toggleGuideButton.setChecked(config['GENERAL'].getboolean('guide_visibility'))
     self.toggleGuideButton.connect('clicked()', self.toggleGuideHoles)
     footerLayout.addWidget(self.toggleGuideButton, 0, 8, 1, 1)
 
     self.autoCheckBox = qt.QCheckBox("Auto")
-    self.autoCheckBox.setChecked(True)
+    self.autoCheckBox.setChecked(config['GENERAL'].getboolean('auto'))
     footerLayout.addWidget(self.autoCheckBox, 1, 8, 1, 1)
 
     # Add vertical spacer
     self.layout.addStretch(1)
     # -------------------------------------- ----------  --------------------------------------
-
 
   def select_directory(self):
     directory = qt.QFileDialog.getExistingDirectory(self.parent, "Select Cases Directory")
@@ -442,6 +444,9 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         self.planningCollapsibleButton.collapsed = False
 
         self.focusSliceWindowsOnVolume(self.getNodeFromImageRole("PLANNING"))
+        slicer.util.resetSliceViews()
+        controller = slicer.app.layoutManager().sliceWidget('Red').sliceController().setSliceVisible(True)
+
     print(f'Current phase: {self.currentPhase}')
 
   # ------------------------------------- Connection -------------------------------------
@@ -509,6 +514,9 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.filesToBeLoaded = []
     self.observationTimer.stop()
 
+    if self.nodeAddedObserver:
+      slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
+
     # TODO: Might be safer to restart Slicer
     sceneSaveFilename = f'{self.caseDirPath}/saved-scene-{time.strftime("%Y%m%d-%H%M%S")}.mrb'
     if slicer.util.saveScene(sceneSaveFilename):
@@ -551,6 +559,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.imageListTableWidget.setItem(rowCount, 1, imageTime)
     self.imageListTableWidget.setCellWidget(rowCount, 2, imageRoleChoice) # set the combo box as a cell widget
 
+    self.imageListTableWidget.scrollToBottom()
+
     self.autoImageRoleAssignment(newNode, imageRoleChoice, rowCount)
 
     # TODO: Maybe force the slice windows back to the image that should be showing depending on which Phase the module is in
@@ -572,7 +582,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       elif self.currentPhase == "REGISTRATION":
         if self.autoCheckBox.isChecked():
           qt.QTimer.singleShot(1000, lambda: self.onRegister())
-
+          pass
     elif "cover" in name.casefold():
       imageRoleChoice.setCurrentIndex(self.imageRoles.index("PLANNING"))
       self.updateImageListRoles(imageRoleChoice.currentText, rowCount)
@@ -756,6 +766,10 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
 
     self.focusSliceWindowsOnVolume(inputVolume)
     self.validRegistration = True
+    self.validRegistrationLabel.text= "Registration Successful"
+    self.validRegistrationLabel.setStyleSheet("QLabel {background-color: #1A9A30}")
+
+    self.displayRegistrationVolume()
 
     # with open('C:/w/data/ProstateBiopsyModuleTest/RegTest/successLog.txt', 'a') as f:
     #   f.write(f'{inputVolume.GetName()}\n')
@@ -771,6 +785,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
 
     self.focusSliceWindowsOnVolume(inputVolume)
     self.validRegistration = False
+    self.validRegistrationLabel.text= "Registration Failed"
+    self.validRegistrationLabel.setStyleSheet("QLabel {background-color: #660000}")
     
     # with open('C:/w/data/ProstateBiopsyModuleTest/RegTest/failLog.txt', 'a') as f:
     #   f.write(f'{inputVolume.GetName()}\n')
@@ -815,6 +831,26 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       if not fiducialFound:
         return False
     return True
+
+  def displayRegistrationVolume(self):
+    volumeNode = slicer.mrmlScene.GetFirstNodeByName("MaskedCalibrationVolume")
+    if not volumeNode:
+      return
+    volRenLogic = slicer.modules.volumerendering.logic()
+    displayNode = volRenLogic.CreateDefaultVolumeRenderingNodes(volumeNode)
+    displayNode.SetVisibility(True)
+
+    # Rotate 3D view to show
+    layoutManager = slicer.app.layoutManager()
+    threeDWidget = layoutManager.threeDWidget(0)
+    threeDView = threeDWidget.threeDView()
+    threeDView.resetFocalPoint()
+    threeDView.resetCamera()
+
+    cameraNode = threeDView.cameraNode()
+    cameraNode.SetPosition([300,300,-300])
+    cameraNode.SetViewUp([0,1,0])
+    cameraNode.ResetClippingRange()
 
   def loadTemplateConfiguration(self):
     currentFilePath = os.path.dirname(slicer.util.modulePath(self.__module__))
@@ -1460,7 +1496,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
             sliceNode = lm.sliceWidget(slice).mrmlSliceNode()
             sliceNode.JumpSliceByOffsetting(newTargetRASList[i][0], newTargetRASList[i][1], newTargetRASList[i][2]) 
 
-  
   def onTargetAdded(self, caller, event):
     newFiducialIndex = self.biopsyFiducialListNode.GetNumberOfControlPoints() - 1
 
@@ -1512,6 +1547,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     deleteItem.setIcon(deleteIcon)
     deleteItem.connect('clicked()', lambda: self.onDeleteTarget(deleteItem))
     self.targetListTableWidget.setCellWidget(newFiducialIndex, 4, deleteItem)
+
+    self.targetListTableWidget.scrollToBottom()
 
   def onDeleteTarget(self, button):
     for index in range(self.targetListTableWidget.rowCount):
@@ -1616,9 +1653,20 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.biopsyFiducialListNode.SetNthControlPointLabel(tableItem.row(), tableItem.text())
 
   def onGenerateWorksheet(self):
-    from reportlab.pdfgen import canvas
-    from reportlab.lib.pagesizes import letter
-    from PyPDF2 import PdfWriter, PdfReader
+    try:
+      from reportlab.pdfgen import canvas
+      from reportlab.lib.pagesizes import letter
+    except:
+      slicer.util.pip_install('reportlab')
+      from reportlab.pdfgen import canvas
+      from reportlab.lib.pagesizes import letter
+
+    try:
+      from PyPDF2 import PdfWriter, PdfReader
+    except:
+      slicer.util.pip_install('PyPDF2')
+      from PyPDF2 import PdfWriter, PdfReader
+
     from io import BytesIO
 
     numberOfSheets = math.ceil(self.targetListTableWidget.rowCount / 2)
