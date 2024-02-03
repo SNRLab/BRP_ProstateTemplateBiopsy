@@ -89,8 +89,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.increaseThresholdForRetry = False
     self.validRegistration = False
     self.biopsyFiducialListNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode", "Target")
-    self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self.onTargetAdded)
-    self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self.onTargetMoved)
+    self.fiducialAddedObserver = self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self.onTargetAdded)
+    self.fiducialModifiedObserver = self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self.onTargetMoved)
 
     self.registrationSliceWidget = None
     self.loadedFiles = []
@@ -104,12 +104,23 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.nodeAddedObserver = slicer.mrmlScene.AddObserver(slicer.mrmlScene.NodeAddedEvent,self.onNodeAddedEvent)
 
     slicer.util.setDataProbeVisible(False)
-
+  
   def enter(self):
     slicer.util.setDataProbeVisible(False)
 
   def exit(self):
     slicer.util.setDataProbeVisible(True)
+
+  def cleanup(self):
+    if self.nodeAddedObserver: slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
+    if self.fiducialAddedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialAddedObserver)
+    if self.fiducialModifiedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialModifiedObserver)
+
+  def onReload(self,moduleName="ProstateTemplateBiopsy"):
+    if self.nodeAddedObserver: slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
+    if self.fiducialAddedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialAddedObserver)
+    if self.fiducialModifiedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialModifiedObserver)
+    globals()[moduleName] = slicer.util.reloadScriptedModule(moduleName)
 
   def setup(self):
     ScriptedLoadableModuleWidget.setup(self)
@@ -326,6 +337,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.targetListTableWidget.setSizePolicy(qt.QSizePolicy.MinimumExpanding, qt.QSizePolicy.Minimum)
     self.targetListTableWidget.setColumnWidth(4, 10)
     self.targetListTableWidget.itemChanged.connect(self.onTargetListItemChanged)
+    self.targetListTableWidget.cellClicked.connect(self.onTargetTableItemClicked)
 
     generateWorksheetFont = qt.QFont()
     generateWorksheetFont.setPointSize(14)
@@ -377,9 +389,29 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.toggleGuideButton.connect('clicked()', self.toggleGuideHoles)
     footerLayout.addWidget(self.toggleGuideButton, 0, 8, 1, 1)
 
+    self.toggleCrosshairButton = qt.QPushButton("")
+    self.toggleCrosshairButton.setMaximumWidth(50)
+    crosshairIconPath = os.path.join(moduleDir, 'Resources/Icons', 'SlicesCrosshair.png')
+    crosshairIcon = qt.QIcon(crosshairIconPath)
+    self.toggleCrosshairButton.setIcon(crosshairIcon)
+    self.toggleCrosshairButton.toolTip = "Toggle Crosshair"
+    self.toggleCrosshairButton.setCheckable(True)
+    self.toggleCrosshairButton.connect('clicked()', self.toggleCrosshair)
+    footerLayout.addWidget(self.toggleCrosshairButton, 1, 7, 1, 1)
+
+    self.toggleWindowLevelModeButton = qt.QPushButton("")
+    self.toggleWindowLevelModeButton.setMaximumWidth(50)
+    windowLevelIconPath = os.path.join(moduleDir, 'Resources/Icons', 'MouseWindowLevelMode.png')
+    windowLevelIcon = qt.QIcon(windowLevelIconPath)
+    self.toggleWindowLevelModeButton.setIcon(windowLevelIcon)
+    self.toggleWindowLevelModeButton.toolTip = "Toggle Window/Level mode"
+    self.toggleWindowLevelModeButton.setCheckable(True)
+    self.toggleWindowLevelModeButton.connect('clicked()', self.toggleWindowLevelMode)
+    footerLayout.addWidget(self.toggleWindowLevelModeButton, 1, 8, 1, 1)
+
     self.autoCheckBox = qt.QCheckBox("Auto")
     self.autoCheckBox.setChecked(config['GENERAL'].getboolean('auto'))
-    footerLayout.addWidget(self.autoCheckBox, 1, 8, 1, 1)
+    footerLayout.addWidget(self.autoCheckBox, 2, 8, 1, 1)
 
     # Add vertical spacer
     self.layout.addStretch(1)
@@ -445,7 +477,14 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
 
         self.focusSliceWindowsOnVolume(self.getNodeFromImageRole("PLANNING"))
         slicer.util.resetSliceViews()
-        controller = slicer.app.layoutManager().sliceWidget('Red').sliceController().setSliceVisible(True)
+
+        sliceWidget = slicer.app.layoutManager().sliceWidget('Red')
+        controller = sliceWidget.sliceController().setSliceVisible(True)
+        sliceNode = sliceWidget.mrmlSliceNode()
+        x = 160
+        y = x * sliceNode.GetFieldOfView()[1] / sliceNode.GetFieldOfView()[0]
+        z = sliceNode.GetFieldOfView()[2]
+        sliceNode.SetFieldOfView(x,y,z)
 
     print(f'Current phase: {self.currentPhase}')
 
@@ -507,25 +546,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       for filename in glob.iglob(f'{directory}/**/*.dcm', recursive=True):
         filenames.append(filename.replace('\\', '/'))
     return filenames
-
-  def saveAndCloseCase(self):
-    self.seriesList = []
-    self.loadedFiles = []
-    self.filesToBeLoaded = []
-    self.observationTimer.stop()
-
-    if self.nodeAddedObserver:
-      slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
-
-    # TODO: Might be safer to restart Slicer
-    sceneSaveFilename = f'{self.caseDirPath}/saved-scene-{time.strftime("%Y%m%d-%H%M%S")}.mrb'
-    if slicer.util.saveScene(sceneSaveFilename):
-      print("Scene saved to: {0}".format(sceneSaveFilename))
-      slicer.mrmlScene.Clear(0)
-      self.onReload()
-    else:
-      print("Scene saving failed")
-        
+  
   def loadSeries(self, newFilesAdded):
     seriesUIDs = []
     for file in newFilesAdded:
@@ -582,7 +603,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       elif self.currentPhase == "REGISTRATION":
         if self.autoCheckBox.isChecked():
           qt.QTimer.singleShot(1000, lambda: self.onRegister())
-          pass
     elif "cover" in name.casefold():
       imageRoleChoice.setCurrentIndex(self.imageRoles.index("PLANNING"))
       self.updateImageListRoles(imageRoleChoice.currentText, rowCount)
@@ -610,7 +630,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     if self.zFrameModelNode:
       self.zFrameModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
       self.zFrameModelNode.GetDisplayNode().SetVisibility2D(True)
-      self.templateModelNode.SetDisplayVisibility(True)
+      self.zFrameModelNode.SetDisplayVisibility(True)
     if self.templateModelNode:
       self.templateModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
       self.templateModelNode.GetDisplayNode().SetVisibility2D(False)
@@ -1454,8 +1474,10 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     else:
       self.removeNodeByName("Target")
       self.biopsyFiducialListNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode", "Target")
-      self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self.onTargetAdded)
-      self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self.onTargetMoved)
+      if self.fiducialAddedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialAddedObserver)
+      if self.fiducialModifiedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialModifiedObserver)
+      self.fiducialAddedObserver = self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self.onTargetAdded)
+      self.fiducialModifiedObserver = self.biopsyFiducialListNode.AddObserver(slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self.onTargetMoved)
       fiducialListNode = self.biopsyFiducialListNode
 
     slicer.modules.markups.logic().StartPlaceMode(False)
@@ -1464,8 +1486,13 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     selectionNode = slicer.mrmlScene.GetNodeByID("vtkMRMLSelectionNodeSingleton")
     selectionNode.SetReferenceActivePlaceNodeClassName(fiducialListNode.GetClassName())
     selectionNode.SetActivePlaceNodeID(fiducialListNode.GetID())
+
+    self.toggleWindowLevelModeButton.setChecked(False)
   
   def onTargetMoved(self, caller, event):
+    if caller != self.biopsyFiducialListNode:
+      return
+
     # Cannot identify which changed, so change all of them
     numFiducials = caller.GetNumberOfControlPoints()
 
@@ -1497,6 +1524,9 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
             sliceNode.JumpSliceByOffsetting(newTargetRASList[i][0], newTargetRASList[i][1], newTargetRASList[i][2]) 
 
   def onTargetAdded(self, caller, event):
+    if caller != self.biopsyFiducialListNode:
+      return
+
     newFiducialIndex = self.biopsyFiducialListNode.GetNumberOfControlPoints() - 1
 
     rowCount = self.targetListTableWidget.rowCount
@@ -1549,6 +1579,13 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.targetListTableWidget.setCellWidget(newFiducialIndex, 4, deleteItem)
 
     self.targetListTableWidget.scrollToBottom()
+
+  def onTargetTableItemClicked(self, row, column):
+    targetRAS = [float(i) for i in ast.literal_eval(self.targetListTableWidget.item(row,3).text())]
+    lm = slicer.app.layoutManager()
+    for slice in ['Yellow', 'Green', 'Red']:
+      sliceNode = lm.sliceWidget(slice).mrmlSliceNode()
+      sliceNode.JumpSliceByOffsetting(targetRAS[0], targetRAS[1], targetRAS[2]) 
 
   def onDeleteTarget(self, button):
     for index in range(self.targetListTableWidget.rowCount):
@@ -1668,6 +1705,10 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       from PyPDF2 import PdfWriter, PdfReader
 
     from io import BytesIO
+    import subprocess
+
+    if not self.templateWorksheetPath or not self.templateWorksheetOverlayPath:
+      return
 
     numberOfSheets = math.ceil(self.targetListTableWidget.rowCount / 2)
     currentFilePath = os.path.dirname(slicer.util.modulePath(self.__module__))
@@ -1675,8 +1716,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     blankOverlayWorksheetPath = os.path.join(currentFilePath, "Resources", "Templates", self.templateWorksheetOverlayPath)
     newWorksheetPath = f'{self.caseDirPath}/BiopsyWorksheet_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
     newWorksheetOverlayPath =f'{self.caseDirPath}/BiopsyWorksheetOverlay_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
-    #newWorksheetPath = f'C:/w/data/ProstateBiopsyModuleTest/RegTest/BiopsyWorksheet_test.pdf'
-    #newWorksheetOverlayPath = f'C:/w/data/ProstateBiopsyModuleTest/RegTest/BiopsyWorksheetOverlay_test.pdf'
     with open(blankWorksheetPath, "rb") as f, open(blankOverlayWorksheetPath, "rb") as f_overlay:
       reader = PdfReader(f)
       reader_overlay = PdfReader(f_overlay)
@@ -1740,7 +1779,40 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       writer.write(outputStream)
       writer_overlay.write(outputStream_overlay)
     
-    os.startfile(newWorksheetPath)
+    #os.startfile(newWorksheetPath)
+    subprocess.Popen(['start', newWorksheetPath], shell=True)
+
+  # ------------------------------------- Footer -----------------------------------
+    
+  def saveAndCloseCase(self):
+    if self.showConfirmationBox() != qt.QMessageBox.Ok:
+      return
+
+    self.seriesList = []
+    self.loadedFiles = []
+    self.filesToBeLoaded = []
+    self.observationTimer.stop()
+
+    if self.nodeAddedObserver: slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
+    if self.fiducialAddedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialAddedObserver)
+    if self.fiducialModifiedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialModifiedObserver)
+
+    # TODO: Might be safer to restart Slicer
+    sceneSaveFilename = f'{self.caseDirPath}/saved-scene-{time.strftime("%Y%m%d-%H%M%S")}.mrb'
+    if slicer.util.saveScene(sceneSaveFilename):
+      print("Scene saved to: {0}".format(sceneSaveFilename))
+      slicer.mrmlScene.Clear(0)
+      self.onReload()
+    else:
+      print("Scene saving failed")
+
+  def showConfirmationBox(self):
+    msgBox = qt.QMessageBox()
+    msgBox.setIcon(qt.QMessageBox.Information)
+    msgBox.setText("Save and close scene?")
+    msgBox.setWindowTitle("Confirmation")
+    msgBox.setStandardButtons(qt.QMessageBox.Ok | qt.QMessageBox.Cancel)
+    return msgBox.exec()
 
   def addRuler(self):
     biopsyRulerListNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode", "Ruler")
@@ -1748,6 +1820,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     selectionNode = slicer.mrmlScene.GetNodeByID("vtkMRMLSelectionNodeSingleton")
     selectionNode.SetReferenceActivePlaceNodeClassName(biopsyRulerListNode.GetClassName())
     selectionNode.SetActivePlaceNodeID(biopsyRulerListNode.GetID())
+    self.toggleWindowLevelModeButton.setChecked(False)
 
   def toggleGuideHoles(self):
     if self.toggleGuideButton.isChecked():
@@ -1756,3 +1829,16 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     else:
       if self.guideHolesModelNode:
         self.guideHolesModelNode.GetDisplayNode().SetVisibility2D(False)
+
+  def toggleWindowLevelMode(self):
+    if self.toggleWindowLevelModeButton.isChecked():
+      slicer.app.applicationLogic().GetInteractionNode().SetCurrentInteractionMode(slicer.vtkMRMLInteractionNode.AdjustWindowLevel)
+    else:
+      slicer.app.applicationLogic().GetInteractionNode().SetCurrentInteractionMode(slicer.vtkMRMLInteractionNode.ViewTransform)
+
+  def toggleCrosshair(self):
+    if self.toggleCrosshairButton.isChecked():
+      slicer.util.getNode("Crosshair").SetCrosshairMode(slicer.vtkMRMLCrosshairNode.ShowSmallIntersection)
+    else:
+      slicer.util.getNode("Crosshair").SetCrosshairMode(slicer.vtkMRMLCrosshairNode.NoCrosshair)
+      
