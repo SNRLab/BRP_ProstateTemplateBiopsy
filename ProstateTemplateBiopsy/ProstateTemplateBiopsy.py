@@ -95,6 +95,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.registrationSliceWidget = None
     self.loadedFiles = []
     self.filesToBeLoaded = []
+    self.continueObserving = True
     self.observationTimer = qt.QTimer()
     self.observationTimer.setInterval(1250)
     self.observationTimer.timeout.connect(self.observeDicomFolder)
@@ -115,6 +116,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.seriesList = []
     self.loadedFiles = []
     self.filesToBeLoaded = []
+    self.continueObserving = True
     self.observationTimer.stop()
     if self.nodeAddedObserver: slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
     if self.fiducialAddedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialAddedObserver)
@@ -128,6 +130,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.seriesList = []
     self.loadedFiles = []
     self.filesToBeLoaded = []
+    self.continueObserving = True
     self.observationTimer.stop()
     if self.nodeAddedObserver: slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
     if self.fiducialAddedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialAddedObserver)
@@ -541,24 +544,29 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.onPhaseChange("REGISTRATION")
 
   def observeDicomFolder(self):
-    currentFileList = self.getFileList(f'{self.caseDirPath}/dicom')
-    # Files still being added
-    if (len(self.loadedFiles) + len(self.filesToBeLoaded)) < len(currentFileList):
-      print("New files observed")
-      for file in currentFileList:
-        if (file not in self.loadedFiles) and (file not in self.filesToBeLoaded):
-          self.filesToBeLoaded.append(file)
-    # Files no longer being added
-    # (len(self.loadedFiles) + len(self.filesToBeLoaded)) >= len(currentFileList)
-    else:
-      if len(self.filesToBeLoaded) > 0:
-        print("Loading new series")
-        qt.QTimer.singleShot(625, lambda: self.loadSeriesDelayed())
+    if self.continueObserving:
+      currentFileList = self.getFileList(f'{self.caseDirPath}/dicom')
+      # Files still being added
+      if (len(self.loadedFiles) + len(self.filesToBeLoaded)) < len(currentFileList):
+        print("New files observed")
+        for file in currentFileList:
+          if (file not in self.loadedFiles) and (file not in self.filesToBeLoaded):
+            self.filesToBeLoaded.append(file)
+      # Files no longer being added
+      # (len(self.loadedFiles) + len(self.filesToBeLoaded)) >= len(currentFileList)
+      else:
+        if len(self.filesToBeLoaded) > 0:
+          print("Loading new series")
+          self.continueObserving = False
+          self.loadSeriesDelayed()
+          #qt.QTimer.singleShot(250, lambda: self.loadSeriesDelayed())
 
   def loadSeriesDelayed(self):
+    print(self.filesToBeLoaded)
     self.loadSeries(self.filesToBeLoaded)
     self.loadedFiles += self.filesToBeLoaded
     self.filesToBeLoaded = []
+    self.continueObserving = True
     
   def getFileList(self, directory):
     filenames = []
@@ -571,7 +579,10 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     seriesUIDs = []
     for file in newFilesAdded:
       seriesUIDs.append(StepBasedSession.getDICOMValue(file, '0020,000E'))
+    seriesUIDs = list(set(seriesUIDs))
+    print(seriesUIDs)
     loadedNodeIDs = DICOMUtils.loadSeriesByUID(seriesUIDs)
+    print(loadedNodeIDs)
   
   @vtk.calldata_type(vtk.VTK_OBJECT)
   def onNodeAddedEvent(self, caller, event, calldata):
@@ -822,9 +833,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
 
     self.displayRegistrationVolume()
 
-    # with open('C:/w/data/ProstateBiopsyModuleTest/RegTest/successLog.txt', 'a') as f:
-    #   f.write(f'{inputVolume.GetName()}\n')
-
     if self.getNodeFromImageRole("PLANNING"):
       self.onPhaseChange("PLANNING")
 
@@ -838,9 +846,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.validRegistration = False
     self.validRegistrationLabel.text= "Registration Failed"
     self.validRegistrationLabel.setStyleSheet("QLabel {background-color: #660000}")
-    
-    # with open('C:/w/data/ProstateBiopsyModuleTest/RegTest/failLog.txt', 'a') as f:
-    #   f.write(f'{inputVolume.GetName()}\n')
   
   def onUseManualRegistration(self):
     self.validRegistration = True
@@ -1827,6 +1832,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.seriesList = []
     self.loadedFiles = []
     self.filesToBeLoaded = []
+    self.continueObserving = True
     self.observationTimer.stop()
 
     if self.nodeAddedObserver: slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
