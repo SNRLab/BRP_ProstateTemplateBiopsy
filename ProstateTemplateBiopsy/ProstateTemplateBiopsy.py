@@ -558,11 +558,11 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         if len(self.filesToBeLoaded) > 0:
           print("Loading new series")
           self.continueObserving = False
-          self.loadSeriesDelayed()
-          #qt.QTimer.singleShot(250, lambda: self.loadSeriesDelayed())
+          #self.loadSeriesDelayed()
+          qt.QTimer.singleShot(250, lambda: self.loadSeriesDelayed())
 
   def loadSeriesDelayed(self):
-    print(self.filesToBeLoaded)
+    #print(self.filesToBeLoaded)
     self.loadSeries(self.filesToBeLoaded)
     self.loadedFiles += self.filesToBeLoaded
     self.filesToBeLoaded = []
@@ -580,9 +580,9 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     for file in newFilesAdded:
       seriesUIDs.append(StepBasedSession.getDICOMValue(file, '0020,000E'))
     seriesUIDs = list(set(seriesUIDs))
-    print(seriesUIDs)
+    #print(seriesUIDs)
     loadedNodeIDs = DICOMUtils.loadSeriesByUID(seriesUIDs)
-    print(loadedNodeIDs)
+    #print(loadedNodeIDs)
   
   @vtk.calldata_type(vtk.VTK_OBJECT)
   def onNodeAddedEvent(self, caller, event, calldata):
