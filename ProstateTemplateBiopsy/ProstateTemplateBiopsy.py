@@ -83,7 +83,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.worksheetHorizontalOffset = 26
     self.worksheetVerticalOffset = 26
     self.removeNodeByName('ZFrameTransform')
-    # TODO: Cleanup function to allow for a Reload to truly restart a case?
+
     self.ZFrameCalibrationTransformNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", "ZFrameTransform")
     self.increaseThresholdForRepair = False
     self.increaseThresholdForRetry = False
@@ -96,7 +96,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.loadedFiles = []
     self.filesToBeLoaded = []
     self.observationTimer = qt.QTimer()
-    self.observationTimer.setInterval(500)
+    self.observationTimer.setInterval(1250)
     self.observationTimer.timeout.connect(self.observeDicomFolder)
 
     self.seriesList = []
@@ -112,14 +112,30 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     slicer.util.setDataProbeVisible(True)
 
   def cleanup(self):
+    self.seriesList = []
+    self.loadedFiles = []
+    self.filesToBeLoaded = []
+    self.observationTimer.stop()
     if self.nodeAddedObserver: slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
     if self.fiducialAddedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialAddedObserver)
     if self.fiducialModifiedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialModifiedObserver)
+    self.manualRegistrationTransformSliders.setMRMLTransformNode(None)
+    self.manualRegistrationTransformSliders.reset()
+    self.manualRegistrationRotationSliders.setMRMLTransformNode(None)
+    self.manualRegistrationRotationSliders.reset()
 
   def onReload(self,moduleName="ProstateTemplateBiopsy"):
+    self.seriesList = []
+    self.loadedFiles = []
+    self.filesToBeLoaded = []
+    self.observationTimer.stop()
     if self.nodeAddedObserver: slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
     if self.fiducialAddedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialAddedObserver)
     if self.fiducialModifiedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialModifiedObserver)
+    self.manualRegistrationTransformSliders.setMRMLTransformNode(None)
+    self.manualRegistrationTransformSliders.reset()
+    self.manualRegistrationRotationSliders.setMRMLTransformNode(None)
+    self.manualRegistrationRotationSliders.reset()
     globals()[moduleName] = slicer.util.reloadScriptedModule(moduleName)
 
   def setup(self):
@@ -178,11 +194,12 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.imageListTableWidget.setMaximumHeight(100)
     imageListLayout.addWidget(self.imageListTableWidget)
     self.imageListTableWidget.setSizePolicy(qt.QSizePolicy.MinimumExpanding, qt.QSizePolicy.Minimum)
+    self.imageListTableWidget.cellClicked.connect(self.onimageListTableItemClicked)
     # -------------------------------------- ----------  --------------------------------------
 
     # ---------------------------------- Registration UI --------------------------------------
     # TODO: 
-    # - Sometimes Transform sliders have a bug that cause one slider to change another when clicking directly towards it; Might happen with switching transforms
+    # - Transform bugs out when using arrows in sliders to change translation values before changing rotation values. Occurs in Slicer outside of the module
     self.registrationCollapsibleButton = ctk.ctkCollapsibleButton()
     self.registrationCollapsibleButton.text = "Registration"
     self.registrationCollapsibleButton.collapsed = True
@@ -527,18 +544,18 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     currentFileList = self.getFileList(f'{self.caseDirPath}/dicom')
     # Files still being added
     if (len(self.loadedFiles) + len(self.filesToBeLoaded)) < len(currentFileList):
+      print("New files observed")
       for file in currentFileList:
         if (file not in self.loadedFiles) and (file not in self.filesToBeLoaded):
           self.filesToBeLoaded.append(file)
-      # TODO: Mark new files loading as Happening
     # Files no longer being added
     # (len(self.loadedFiles) + len(self.filesToBeLoaded)) >= len(currentFileList)
     else:
       if len(self.filesToBeLoaded) > 0:
+        print("Loading new series")
         self.loadSeries(self.filesToBeLoaded)
         self.loadedFiles += self.filesToBeLoaded
         self.filesToBeLoaded = []
-      # TODO: Mark new files loading as Not Happening
     
   def getFileList(self, directory):
     filenames = []
@@ -584,8 +601,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
 
     self.autoImageRoleAssignment(newNode, imageRoleChoice, rowCount)
 
-    # TODO: Maybe force the slice windows back to the image that should be showing depending on which Phase the module is in
-
   def updateImageListRoles(self, newRoleAssigned, rowCount):
     if newRoleAssigned in ["CALIBRATION", "PLANNING"]:
       for index in range(0, self.imageListTableWidget.rowCount):
@@ -612,8 +627,18 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
   def getNodeFromImageRole(self, imageRole):
     for index in range(0, self.imageListTableWidget.rowCount):
       if self.imageListTableWidget.cellWidget(index, 2).currentText == imageRole:
-        return slicer.mrmlScene.GetFirstNodeByName(self.imageListTableWidget.item(index, 0).text())
+        return slicer.util.getFirstNodeByClassByName("vtkMRMLVolumeNode", self.imageListTableWidget.item(index, 0).text())
     return None
+  
+  def onimageListTableItemClicked(self, row, column):
+    if column < 1:
+      volumeNode = slicer.util.getFirstNodeByClassByName("vtkMRMLVolumeNode", self.imageListTableWidget.item(row, 0).text())
+      if volumeNode:
+        lm = slicer.app.layoutManager()
+        for slice in ['Yellow', 'Green', 'Red']:
+          sliceCompositeNode = lm.sliceWidget(slice).sliceLogic().GetSliceCompositeNode()
+          sliceCompositeNode.SetBackgroundVolumeID(volumeNode.GetID())
+        slicer.util.resetSliceViews()
   
   # ------------------------------------- Registration -----------------------------------
 
@@ -650,7 +675,10 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       self.guideHolesModelNode.SetDisplayVisibility(True)
     if self.guideHoleLabelsModelNode:
       self.guideHoleLabelsModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
-      self.guideHoleLabelsModelNode.GetDisplayNode().SetVisibility2D(True)
+      if self.toggleGuideButton.isChecked():
+        self.guideHoleLabelsModelNode.GetDisplayNode().SetVisibility2D(True)
+      else:
+        self.guideHoleLabelsModelNode.GetDisplayNode().SetVisibility2D(False)
       self.guideHoleLabelsModelNode.GetDisplayNode().SetSliceIntersectionThickness(1)
       self.guideHoleLabelsModelNode.SetDisplayVisibility(True)
 
@@ -1462,6 +1490,12 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       identityMatrix = vtk.vtkMatrix4x4()
       identityMatrix.Identity()
       self.ZFrameCalibrationTransformNode.SetMatrixTransformToParent(identityMatrix)
+      self.manualRegistrationTransformSliders.setMRMLTransformNode(None)
+      self.manualRegistrationRotationSliders.setMRMLTransformNode(None)
+      self.manualRegistrationTransformSliders.reset()
+      self.manualRegistrationRotationSliders.reset()
+      self.manualRegistrationTransformSliders.setMRMLTransformNode(self.ZFrameCalibrationTransformNode)
+      self.manualRegistrationRotationSliders.setMRMLTransformNode(self.ZFrameCalibrationTransformNode)
 
   # ------------------------------------- Planning -----------------------------------
   
@@ -1613,7 +1647,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     fiducialNode.GetNthControlPointPosition(index, targetRAS)
 
     # Target Grid
-    # TODO: Add a check for when it's outside of the target volume? But maybe not; sometimes done intentionally
     targetGrid = None
     closestHole = None
     inverseMatrix = vtk.vtkMatrix4x4()
@@ -1797,7 +1830,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     if self.fiducialAddedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialAddedObserver)
     if self.fiducialModifiedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialModifiedObserver)
 
-    # TODO: Might be safer to restart Slicer
     sceneSaveFilename = f'{self.caseDirPath}/saved-scene-{time.strftime("%Y%m%d-%H%M%S")}.mrb'
     if slicer.util.saveScene(sceneSaveFilename):
       print("Scene saved to: {0}".format(sceneSaveFilename))
@@ -1809,7 +1841,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
   def showConfirmationBox(self):
     msgBox = qt.QMessageBox()
     msgBox.setIcon(qt.QMessageBox.Information)
-    msgBox.setText("Save and close scene?")
+    msgBox.setText("Save and close case?")
     msgBox.setWindowTitle("Confirmation")
     msgBox.setStandardButtons(qt.QMessageBox.Ok | qt.QMessageBox.Cancel)
     return msgBox.exec()
@@ -1826,9 +1858,13 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     if self.toggleGuideButton.isChecked():
       if self.guideHolesModelNode:
         self.guideHolesModelNode.GetDisplayNode().SetVisibility2D(True)
+      if self.guideHoleLabelsModelNode:
+        self.guideHoleLabelsModelNode.GetDisplayNode().SetVisibility2D(True)
     else:
       if self.guideHolesModelNode:
         self.guideHolesModelNode.GetDisplayNode().SetVisibility2D(False)
+      if self.guideHoleLabelsModelNode:
+        self.guideHoleLabelsModelNode.GetDisplayNode().SetVisibility2D(False)
 
   def toggleWindowLevelMode(self):
     if self.toggleWindowLevelModeButton.isChecked():
