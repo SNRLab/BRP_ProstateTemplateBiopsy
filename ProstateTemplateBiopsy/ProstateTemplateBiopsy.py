@@ -553,9 +553,12 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     else:
       if len(self.filesToBeLoaded) > 0:
         print("Loading new series")
-        self.loadSeries(self.filesToBeLoaded)
-        self.loadedFiles += self.filesToBeLoaded
-        self.filesToBeLoaded = []
+        qt.QTimer.singleShot(625, lambda: self.loadSeriesDelayed())
+
+  def loadSeriesDelayed(self):
+    self.loadSeries(self.filesToBeLoaded)
+    self.loadedFiles += self.filesToBeLoaded
+    self.filesToBeLoaded = []
     
   def getFileList(self, directory):
     filenames = []
