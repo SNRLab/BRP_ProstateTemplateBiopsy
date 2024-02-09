@@ -82,6 +82,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.worksheetOrigin = [238,404]
     self.worksheetHorizontalOffset = 26
     self.worksheetVerticalOffset = 26
+    self.worksheetCoordinateOrder = ['horizontal, vertical']
     self.removeNodeByName('ZFrameTransform')
 
     self.ZFrameCalibrationTransformNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", "ZFrameTransform")
@@ -666,20 +667,20 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     result, outputTransform = self.registerZFrame()
     self.increaseThresholdForRetry = False
 
-    if self.zFrameModelNode:
+    if self.zFrameModelNode and self.zFrameModelNode.GetDisplayNode():
       self.zFrameModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
       self.zFrameModelNode.GetDisplayNode().SetVisibility2D(True)
       self.zFrameModelNode.SetDisplayVisibility(True)
-    if self.templateModelNode:
+    if self.templateModelNode and self.templateModelNode.GetDisplayNode():
       self.templateModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
       self.templateModelNode.GetDisplayNode().SetVisibility2D(False)
       self.templateModelNode.SetDisplayVisibility(True)
-    if self.calibratorModelNode:
+    if self.calibratorModelNode and self.calibratorModelNode.GetDisplayNode():
       self.calibratorModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
       self.calibratorModelNode.GetDisplayNode().SetVisibility2D(True)
       self.calibratorModelNode.GetDisplayNode().SetSliceIntersectionThickness(1)
       self.calibratorModelNode.SetDisplayVisibility(True)
-    if self.guideHolesModelNode:
+    if self.guideHolesModelNode and self.guideHolesModelNode.GetDisplayNode():
       self.guideHolesModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
       if self.toggleGuideButton.isChecked():
         self.guideHolesModelNode.GetDisplayNode().SetVisibility2D(True)
@@ -687,7 +688,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         self.guideHolesModelNode.GetDisplayNode().SetVisibility2D(False)
       self.guideHolesModelNode.GetDisplayNode().SetSliceIntersectionThickness(1)
       self.guideHolesModelNode.SetDisplayVisibility(True)
-    if self.guideHoleLabelsModelNode:
+    if self.guideHoleLabelsModelNode and self.guideHoleLabelsModelNode.GetDisplayNode():
       self.guideHoleLabelsModelNode.SetAndObserveTransformNodeID(outputTransform.GetID())
       if self.toggleGuideButton.isChecked():
         self.guideHoleLabelsModelNode.GetDisplayNode().SetVisibility2D(True)
@@ -917,8 +918,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       CALIBRATOR_MODEL_PATH = 'template001/template001-Calibrator.vtk'
       GUIDEHOLES_MODEL_PATH = 'template001/template001-GuideHoles.vtk'
       GUIDEHOLELABELS_MODEL_PATH = 'template001/template001-GuideHoleLabels.vtk'
-      self.templateWorksheetPath = 'template001/BiopsyWorksheet.pdf'
-      self.templateWorksheetOverlayPath = 'template001/BiopsyWorksheet_Overlay.pdf'
+      self.templateWorksheetPath = 'template001/BiopsyWorksheet_001.pdf'
+      self.templateWorksheetOverlayPath = 'template001/BiopsyWorksheet_001_Overlay.pdf'
       self.zframeConfig = 'z001'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template001/zframe001.txt")
     elif self.configFileSelectionBox.currentIndex == 1:
@@ -927,8 +928,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       CALIBRATOR_MODEL_PATH = 'template002/template002-Calibrator.vtk'
       GUIDEHOLES_MODEL_PATH = 'template002/template002-GuideHoles.vtk'
       GUIDEHOLELABELS_MODEL_PATH = 'template002/template002-GuideHoleLabels.vtk'
-      self.templateWorksheetPath = 'template002/BiopsyWorksheet.pdf'
-      self.templateWorksheetOverlayPath = 'template002/BiopsyWorksheet_Overlay.pdf'
+      self.templateWorksheetPath = 'template002/BiopsyWorksheet_002.pdf'
+      self.templateWorksheetOverlayPath = 'template002/BiopsyWorksheet_002_Overlay.pdf'
       self.zframeConfig = 'z002'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template002/zframe002.txt")
     elif self.configFileSelectionBox.currentIndex == 2:
@@ -937,8 +938,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       CALIBRATOR_MODEL_PATH = 'template003/template003-Calibrator.vtk'
       GUIDEHOLES_MODEL_PATH = 'template003/template003-GuideHoles.vtk'
       GUIDEHOLELABELS_MODEL_PATH = 'template003/template003-GuideHoleLabels.vtk'
-      self.templateWorksheetPath = 'template003/BiopsyWorksheet.pdf'
-      self.templateWorksheetOverlayPath = 'template003/BiopsyWorksheet_Overlay.pdf'
+      self.templateWorksheetPath = 'template003/BiopsyWorksheet_003.pdf'
+      self.templateWorksheetOverlayPath = 'template003/BiopsyWorksheet_003_Overlay.pdf'
       self.zframeConfig = 'z003'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template003/zframe003.txt")
     else: #self.configFileSelectionBox.currentIndex == 3:
@@ -947,8 +948,8 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       CALIBRATOR_MODEL_PATH = 'template004/template004-Calibrator.vtk'
       GUIDEHOLES_MODEL_PATH = 'template004/template004-GuideHoles.vtk'
       GUIDEHOLELABELS_MODEL_PATH = 'template004/template004-GuideHoleLabels.vtk'
-      self.templateWorksheetPath = 'template004/BiopsyWorksheet.pdf'
-      self.templateWorksheetOverlayPath = 'template004/BiopsyWorksheet_Overlay.pdf'
+      self.templateWorksheetPath = 'template004/BiopsyWorksheet_004.pdf'
+      self.templateWorksheetOverlayPath = 'template004/BiopsyWorksheet_004_Overlay.pdf'
       self.zframeConfig = 'z004'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template004/zframe004.txt")
     
@@ -999,6 +1000,9 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       elif line.startswith('Worksheet vertical offset'):
         match = re.findall(r'\b(\d+\.\d+?)\b', line)
         self.worksheetVerticalOffset = float(match[0])
+      elif line.startswith('Grid coordinate order'):
+        matches = re.findall(r'\(([^)]+)', line)
+        self.worksheetCoordinateOrder = [word.strip() for word in matches[0].split(',')]
       
     if not templateOriginFound:
       raise Exception("ZFrame configuration file is missing template origin")
@@ -1033,7 +1037,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       self.templateModelNode = slicer.util.loadModel(modelPath)
     except:
       print(f'Failed to load model from {modelPath}')  
-    if self.templateModelNode:    
+    if self.templateModelNode and self.templateModelNode.GetDisplayNode():    
       self.templateModelNode.SetName(TEMPLATE_MODEL_NAME)
       modelDisplayNode = self.templateModelNode.GetDisplayNode()
       modelDisplayNode.SetColor(0.67,0.67,0.67)
@@ -1047,7 +1051,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       self.calibratorModelNode = slicer.util.loadModel(modelPath)
     except:
       print(f'Failed to load model from {modelPath}')
-    if self.calibratorModelNode:  
+    if self.calibratorModelNode and self.calibratorModelNode.GetDisplayNode():
       self.calibratorModelNode.SetName(CALIBRATOR_MODEL_NAME)
       modelDisplayNode = self.calibratorModelNode.GetDisplayNode()
       modelDisplayNode.SetColor(1.0,1.0,0.0)
@@ -1062,7 +1066,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       self.guideHolesModelNode = slicer.util.loadModel(modelPath)
     except:
       print(f'Failed to load model from {modelPath}')
-    if self.guideHolesModelNode:
+    if self.guideHolesModelNode and self.guideHolesModelNode.GetDisplayNode():
       self.guideHolesModelNode.SetName(GUIDEHOLES_MODEL_NAME)
       modelDisplayNode = self.guideHolesModelNode.GetDisplayNode()
       modelDisplayNode.SetColor(0.59,0.88,0.64)
@@ -1077,7 +1081,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       self.guideHoleLabelsModelNode = slicer.util.loadModel(modelPath)
     except:
       print(f'Failed to load model from {modelPath}')
-    if self.guideHoleLabelsModelNode:
+    if self.guideHoleLabelsModelNode and self.guideHoleLabelsModelNode.GetDisplayNode():
       self.guideHoleLabelsModelNode.SetName(GUIDEHOLELABELS_MODEL_NAME)
       modelDisplayNode = self.guideHoleLabelsModelNode.GetDisplayNode()
       modelDisplayNode.SetColor(0.49,0.78,0.54)
@@ -1669,7 +1673,10 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         if distance < min_distance:
           min_distance = distance
           closestHole = holeCenter
-          targetGrid = f'{horizontalLabel}, {verticalLabel}'
+          if self.worksheetCoordinateOrder[0].lower() == 'horizontal':
+            targetGrid = f'{horizontalLabel}, {verticalLabel}'
+          else:
+            targetGrid = f'{verticalLabel}, {horizontalLabel}'
 
     # Target Depth (cm)
     targetDepth = abs(targetIJK[2] - self.templateOrigin[2]) / 10
@@ -1740,10 +1747,10 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       from reportlab.lib.pagesizes import letter
 
     try:
-      from PyPDF2 import PdfWriter, PdfReader
+      from PyPDF2 import PdfWriter, PdfReader, generic
     except:
       slicer.util.pip_install('PyPDF2')
-      from PyPDF2 import PdfWriter, PdfReader
+      from PyPDF2 import PdfWriter, PdfReader, generic
 
     from io import BytesIO
     import subprocess
@@ -1757,36 +1764,57 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     blankOverlayWorksheetPath = os.path.join(currentFilePath, "Resources", "Templates", self.templateWorksheetOverlayPath)
     newWorksheetPath = f'{self.caseDirPath}/BiopsyWorksheet_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
     newWorksheetOverlayPath =f'{self.caseDirPath}/BiopsyWorksheetOverlay_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
+
+    if numberOfSheets <= 0:
+      print("No targets for worksheet")
+      return
+
     with open(blankWorksheetPath, "rb") as f, open(blankOverlayWorksheetPath, "rb") as f_overlay:
-      reader = PdfReader(f)
-      reader_overlay = PdfReader(f_overlay)
       writer = PdfWriter()
       writer_overlay = PdfWriter()
     
       for sheetIndex in range(numberOfSheets):
-        page = reader.pages[0]
-        page_overlay = reader_overlay.pages[0]
+        reader = PdfReader(f)
+        reader_overlay = PdfReader(f_overlay)
+
+        # TODO: Unique form field names are required otherwise the first page's form values will overwrite the rest
+        # Haven't figured out a way to dynamically modify the form field names using PyPDF2
+        # Currently the template file contains 12 pages with unique form field names allowing for a limit up to 24 targets that can be generated on a worksheet
+        if sheetIndex > 12:
+          break
+        page = reader.pages[sheetIndex]
+        page_overlay = reader_overlay.pages[sheetIndex]
+
+        # For drawing
         packet = BytesIO()
-        can = canvas.Canvas(packet, pagesize=letter)
+        can = canvas.Canvas(packet, pagesize=letter)       
 
         rowIndex = sheetIndex * 2
         targetName = self.targetListTableWidget.item(rowIndex, 0).text()
         targetGrid = self.targetListTableWidget.item(rowIndex, 1).text()
         targetDepth = self.targetListTableWidget.item(rowIndex, 2).text()
         
-        #writer.update_page_form_field_values(page, {"TARGET_1": targetName})
-        writer.update_page_form_field_values(page, {"GRID_1": targetGrid})
-        writer.update_page_form_field_values(page, {"DEPTH_1": targetDepth})
-        #writer_overlay.update_page_form_field_values(page_overlay, {"TARGET_1": targetName})
-        writer_overlay.update_page_form_field_values(page_overlay, {"GRID_1": targetGrid})
-        writer_overlay.update_page_form_field_values(page_overlay, {"DEPTH_1": targetDepth})
+        writer.update_page_form_field_values(page, {f'TARGET_{rowIndex+1}': targetName})
+        writer.update_page_form_field_values(page, {f'GRID_{rowIndex+1}': targetGrid})
+        writer.update_page_form_field_values(page, {f'DEPTH_{rowIndex+1}': targetDepth})
+        writer_overlay.update_page_form_field_values(page_overlay, {f'TARGET_{rowIndex+1}': targetName})
+        writer_overlay.update_page_form_field_values(page_overlay, {f'GRID_{rowIndex+1}': targetGrid})
+        writer_overlay.update_page_form_field_values(page_overlay, {f'DEPTH_{rowIndex+1}': targetDepth})
 
-        gridMatches = re.findall(r'(\w+)', targetGrid)
-        worksheetHole_1 = [self.worksheetOrigin[0][0] + (self.templateHorizontalLabels.index(gridMatches[0]) * self.worksheetHorizontalOffset), self.worksheetOrigin[0][1] - (self.templateVerticalLabels.index(gridMatches[1]) * self.worksheetVerticalOffset)]
+        matches = re.findall(r'[^,]+', targetGrid)
+        gridMatches = [coord.strip() for coord in matches]
+        if self.worksheetCoordinateOrder[0].lower() == 'horizontal':
+          worksheetHole_1 = [self.worksheetOrigin[0][0] + (self.templateHorizontalLabels.index(gridMatches[0]) * self.worksheetHorizontalOffset), self.worksheetOrigin[0][1] - (self.templateVerticalLabels.index(gridMatches[1]) * self.worksheetVerticalOffset)]
+        else:
+          worksheetHole_1 = [self.worksheetOrigin[0][0] + (self.templateHorizontalLabels.index(gridMatches[1]) * self.worksheetHorizontalOffset), self.worksheetOrigin[0][1] - (self.templateVerticalLabels.index(gridMatches[0]) * self.worksheetVerticalOffset)]
 
         # Draw a cross
         can.line(worksheetHole_1[0]-7, worksheetHole_1[1]+7, worksheetHole_1[0]+7, worksheetHole_1[1]-7)
         can.line(worksheetHole_1[0]-7, worksheetHole_1[1]-7, worksheetHole_1[0]+7, worksheetHole_1[1]+7)
+
+        # Also draw a cross in the verification box (to confirm alignment)
+        can.line(298.58-7, 701.64+7, 298.58+7, 701.64-7)
+        can.line(298.58-7, 701.64-7, 298.58+7, 701.64+7)
         
         rowIndex += 1
         if rowIndex < self.targetListTableWidget.rowCount:
@@ -1794,15 +1822,18 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
           targetGrid = self.targetListTableWidget.item(rowIndex, 1).text()
           targetDepth = self.targetListTableWidget.item(rowIndex, 2).text()
 
-          #writer.update_page_form_field_values(page, {"TARGET_2": targetName})
-          writer.update_page_form_field_values(page, {"GRID_2": targetGrid})
-          writer.update_page_form_field_values(page, {"DEPTH_2": targetDepth})
-          #writer_overlay.update_page_form_field_values(page_overlay, {"TARGET_2": targetName})
-          writer_overlay.update_page_form_field_values(page_overlay, {"GRID_2": targetGrid})
-          writer_overlay.update_page_form_field_values(page_overlay, {"DEPTH_2": targetDepth})
+          writer.update_page_form_field_values(page, {f'TARGET_{rowIndex+1}': targetName})
+          writer.update_page_form_field_values(page, {f'GRID_{rowIndex+1}': targetGrid})
+          writer.update_page_form_field_values(page, {f'DEPTH_{rowIndex+1}': targetDepth})
+          writer_overlay.update_page_form_field_values(page_overlay, {f'TARGET_{rowIndex+1}': targetName})
+          writer_overlay.update_page_form_field_values(page_overlay, {f'GRID_{rowIndex+1}': targetGrid})
+          writer_overlay.update_page_form_field_values(page_overlay, {f'DEPTH_{rowIndex+1}': targetDepth})
 
           gridMatches = re.findall(r'(\w+)', targetGrid)
-          worksheetHole_2 = [self.worksheetOrigin[1][0] + (self.templateHorizontalLabels.index(gridMatches[0]) * self.worksheetHorizontalOffset), self.worksheetOrigin[1][1] - (self.templateVerticalLabels.index(gridMatches[1]) * self.worksheetVerticalOffset)]
+          if self.worksheetCoordinateOrder[0].lower() == 'horizontal':
+            worksheetHole_2 = [self.worksheetOrigin[1][0] + (self.templateHorizontalLabels.index(gridMatches[0]) * self.worksheetHorizontalOffset), self.worksheetOrigin[1][1] - (self.templateVerticalLabels.index(gridMatches[1]) * self.worksheetVerticalOffset)]
+          else:
+            worksheetHole_2 = [self.worksheetOrigin[1][0] + (self.templateHorizontalLabels.index(gridMatches[1]) * self.worksheetHorizontalOffset), self.worksheetOrigin[1][1] - (self.templateVerticalLabels.index(gridMatches[0]) * self.worksheetVerticalOffset)]
 
           # Draw a cross
           can.line(worksheetHole_2[0]-7, worksheetHole_2[1]+7, worksheetHole_2[0]+7, worksheetHole_2[1]-7)

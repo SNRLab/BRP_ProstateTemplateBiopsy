@@ -41,3 +41,5 @@ Worksheet vertical offset 1: 14.8
 Worksheet origin 2: (96.8, 311.76)
 Worksheet horizontal offset 2: 14.8
 Worksheet vertical offset 2: 14.8
+
+Grid coordinate order: (Horizontal, Vertical)
