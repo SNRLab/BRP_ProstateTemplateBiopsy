@@ -229,7 +229,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.configFileSelectionBox = qt.QComboBox()
     self.configFileSelectionBox.addItems(['Template 001 - Seven Fiducials', 'Template 002 - Nine Fiducials', 'Template 003 - BRP Robot - Nine Fiducials', 'Template 004 - Wide Z-frame - Seven Fiducials'])
     self.configFileSelectionBox.setCurrentIndex(config['REGISTRATION'].getint('template_index'))
-    registrationLayout.addRow('ZFrame Configuration:', self.configFileSelectionBox)
+    registrationLayout.addRow('Template Configuration:', self.configFileSelectionBox)
 
     registrationParametersGroupBox = ctk.ctkCollapsibleGroupBox()
     registrationParametersGroupBox.title = "Automatic Registration Parameters"
