@@ -10,10 +10,6 @@
 #  PURPOSE.  See the above copyright notices for more information.
 
 #=========================================================================
-# pip_install('scikit-image')
-# pip_install('PyPDF2')
-# pip_install('reportlab')
-
 import os
 import vtk, qt, ctk, slicer, ast
 from slicer.ScriptedLoadableModule import *
@@ -44,13 +40,13 @@ class ProstateTemplateBiopsy(ScriptedLoadableModule):
     ScriptedLoadableModule.__init__(self, parent)
     self.parent.title = "Prostate Template Biopsy"
     self.parent.categories = ["IGT"]
-    self.parent.dependencies = []
+    self.parent.dependencies = ["SlicerDevelopmentToolbox", "ZFrameRegistration"]
     self.parent.contributors = ["Franklin King (SNR)"]
     self.parent.helpText = """
     <a href=\"https://github.com/SNRLab/BRP_ProstateTemplateBiopsy">https://github.com/SNRLab/BRP_ProstateTemplateBiopsy</a>
 """
-    self.parent.acknowledgementText = """
-"""
+    self.parent.acknowledgementText = """Surgical Navigation and Robotics Laboratory, Brigham and Women's Hospital, Harvard
+                                          Medical School, Boston, USA"""
     # Set module icon from Resources/Icons/<ModuleName>.png
     moduleDir = os.path.dirname(self.parent.path)
     for iconExtension in ['.svg', '.png']:
@@ -83,6 +79,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.worksheetHorizontalOffset = 26
     self.worksheetVerticalOffset = 26
     self.worksheetCoordinateOrder = ['horizontal, vertical']
+    self.foxitReaderPath = r"C:\Program Files (x86)\Foxit Software\Foxit PDF Reader\FoxitPDFReader.exe"
     self.removeNodeByName('ZFrameTransform')
 
     self.ZFrameCalibrationTransformNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", "ZFrameTransform")
@@ -332,7 +329,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.planningCollapsibleButton.text = "Planning"
     self.planningCollapsibleButton.collapsed = True
     self.layout.addWidget(self.planningCollapsibleButton)
-    planningLayout = qt.QVBoxLayout(self.planningCollapsibleButton)
+    planningLayout = qt.QFormLayout(self.planningCollapsibleButton)
 
     addTargetFont = qt.QFont()
     addTargetFont.setPointSize(18)
@@ -343,7 +340,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.addTargetButton.toolTip = "Add a target for biopsy"
     self.addTargetButton.enabled = True
     self.addTargetButton.connect('clicked()', self.onAddTarget)
-    planningLayout.addWidget(self.addTargetButton)
+    planningLayout.addRow(self.addTargetButton)
 
     # Image List Table with combo boxes to set role for images
     self.targetListTableWidget = qt.QTableWidget(0, 5)
@@ -354,21 +351,78 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.targetListTableWidget.horizontalHeader().setSectionResizeMode(3, qt.QHeaderView.Stretch)
     self.targetListTableWidget.horizontalHeader().setSectionResizeMode(4, qt.QHeaderView.Fixed)
     self.targetListTableWidget.setMaximumHeight(200)
-    planningLayout.addWidget(self.targetListTableWidget)
+    planningLayout.addRow(self.targetListTableWidget)
     self.targetListTableWidget.setSizePolicy(qt.QSizePolicy.MinimumExpanding, qt.QSizePolicy.Minimum)
     self.targetListTableWidget.setColumnWidth(4, 10)
     self.targetListTableWidget.itemChanged.connect(self.onTargetListItemChanged)
     self.targetListTableWidget.cellClicked.connect(self.onTargetTableItemClicked)
 
-    generateWorksheetFont = qt.QFont()
-    generateWorksheetFont.setPointSize(14)
-    generateWorksheetFont.setBold(False)
-    self.generateWorksheetButton = qt.QPushButton("Generate Worksheet")
-    self.generateWorksheetButton.setFont(generateWorksheetFont)
-    self.generateWorksheetButton.toolTip = "Generate PDF for worksheet"
-    self.generateWorksheetButton.enabled = True
-    self.generateWorksheetButton.connect('clicked()', self.onGenerateWorksheet)
-    planningLayout.addWidget(self.generateWorksheetButton)
+    # # To avoid confusion, and as long as the computer can handle it, changed to just always update worksheet
+    # generateWorksheetFont = qt.QFont()
+    # generateWorksheetFont.setPointSize(14)
+    # generateWorksheetFont.setBold(False)
+    # self.generateWorksheetButton = qt.QPushButton("Generate Worksheet")
+    # self.generateWorksheetButton.setFont(generateWorksheetFont)
+    # self.generateWorksheetButton.toolTip = "Generate PDF for worksheet"
+    # self.generateWorksheetButton.enabled = True
+    # self.generateWorksheetButton.connect('clicked()', self.onGenerateWorksheet)
+    # planningLayout.addRow(self.generateWorksheetButton)
+
+    worksheetWidget = qt.QWidget()
+    planningLayout.addRow(worksheetWidget)
+    worksheetLayout = qt.QHBoxLayout(worksheetWidget)
+
+    worksheetFont = qt.QFont()
+    worksheetFont.setPointSize(13)
+    worksheetFont.setBold(False)
+
+    self.openWorksheetButton = qt.QPushButton("Open Worksheet")
+    self.openWorksheetButton.setFont(worksheetFont)
+    self.openWorksheetButton.toolTip = "Open PDF for worksheet"
+    self.openWorksheetButton.enabled = False
+    self.openWorksheetButton.connect('clicked()', self.onOpenWorksheet)
+    worksheetLayout.addWidget(self.openWorksheetButton)
+
+    self.printWorksheetOverlayButton = qt.QPushButton("Print Overlay")
+    self.printWorksheetOverlayButton.setFont(worksheetFont)
+    self.printWorksheetOverlayButton.toolTip = "Print PDF for worksheet"
+    self.printWorksheetOverlayButton.enabled = False
+    self.printWorksheetOverlayButton.connect('clicked()', self.onPrintWorksheetOverlay)
+    if config['PLANNING'].getboolean('print_overlay_button'):
+      worksheetLayout.addWidget(self.printWorksheetOverlayButton)
+
+    self.printWorksheetButton = qt.QPushButton("Print Worksheet")
+    self.printWorksheetButton.setFont(worksheetFont)
+    self.printWorksheetButton.toolTip = "Print PDF for worksheet"
+    self.printWorksheetButton.enabled = False
+    self.printWorksheetButton.connect('clicked()', self.onPrintWorksheet)
+    worksheetLayout.addWidget(self.printWorksheetButton)
+
+    # TODO: Printing only supported in Windows
+    if os.name == 'nt':
+      try:
+        import win32print
+      except:
+        slicer.util.pip_install('pypiwin32')
+        import win32print
+
+      # Enumerate local printers
+      printers = win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL, None, 1)
+      printerNames = [printer[2] for printer in printers]
+
+      self.printerSelectionBox = qt.QComboBox()
+      self.printerSelectionBox.addItems(printerNames)
+      self.printerSelectionBox.editable = False
+      self.printerSelectionBox.setCurrentText(win32print.GetDefaultPrinter())
+      #self.printerSelectionBox.setCurrentIndex(0)
+      planningLayout.addRow("Printer: ", self.printerSelectionBox)
+
+      self.foxitReaderPath = config['PLANNING'].get('foxit_reader_path')
+    
+    self.generateWorksheetsCheckBox = qt.QCheckBox("Generate Worksheets")
+    self.generateWorksheetsCheckBox.setChecked(config['PLANNING'].getboolean('generate_worksheets'))
+    self.generateWorksheetsCheckBox.stateChanged.connect(self.worksheetCheckboxState)
+    planningLayout.addRow(self.generateWorksheetsCheckBox)
     # -------------------------------------- ----------  --------------------------------------
     line = qt.QFrame()
     line.setFrameShape(qt.QFrame.HLine)
@@ -563,7 +617,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
           qt.QTimer.singleShot(250, lambda: self.loadSeriesDelayed())
 
   def loadSeriesDelayed(self):
-    #print(self.filesToBeLoaded)
     self.loadSeries(self.filesToBeLoaded)
     self.loadedFiles += self.filesToBeLoaded
     self.filesToBeLoaded = []
@@ -581,9 +634,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     for file in newFilesAdded:
       seriesUIDs.append(StepBasedSession.getDICOMValue(file, '0020,000E'))
     seriesUIDs = list(set(seriesUIDs))
-    #print(seriesUIDs)
     loadedNodeIDs = DICOMUtils.loadSeriesByUID(seriesUIDs)
-    #print(loadedNodeIDs)
   
   @vtk.calldata_type(vtk.VTK_OBJECT)
   def onNodeAddedEvent(self, caller, event, calldata):
@@ -1561,6 +1612,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         self.targetListTableWidget.item(i, 3).setText(targetRAS_string)
         newTargetRASList.append([float(i) for i in ast.literal_eval(targetRAS_string)])
     
+    # Check if the point was added yet
     if self.targetListTableWidget.rowCount == numFiducials:
       for i in range(self.targetListTableWidget.rowCount):
         if newTargetRASList[i] != oldTargetRASList[i]:
@@ -1568,6 +1620,9 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
           for slice in ['Yellow', 'Green', 'Red']:
             sliceNode = lm.sliceWidget(slice).mrmlSliceNode()
             sliceNode.JumpSliceByOffsetting(newTargetRASList[i][0], newTargetRASList[i][1], newTargetRASList[i][2]) 
+      
+      if self.generateWorksheetsCheckBox.isChecked():
+        self.onGenerateWorksheet()
 
   def onTargetAdded(self, caller, event):
     if caller != self.biopsyFiducialListNode:
@@ -1626,6 +1681,9 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
 
     self.targetListTableWidget.scrollToBottom()
 
+    if self.generateWorksheetsCheckBox.isChecked():
+      self.onGenerateWorksheet()
+
   def onTargetTableItemClicked(self, row, column):
     targetRAS = [float(i) for i in ast.literal_eval(self.targetListTableWidget.item(row,3).text())]
     lm = slicer.app.layoutManager()
@@ -1646,7 +1704,10 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         trajectoryChildren = vtk.vtkIdList()
         shNode.GetItemChildren(trajectoryFolderItemID, trajectoryChildren)
         shNode.RemoveItem(shNode.GetItemByPositionUnderParent(trajectoryFolderItemID,index))
-        return
+        break
+      
+    if self.generateWorksheetsCheckBox.isChecked():
+      self.onGenerateWorksheet()
 
   def calculateGridCoordinates(self, index):
     fiducialNode = self.biopsyFiducialListNode
@@ -1737,6 +1798,16 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       return
     self.biopsyFiducialListNode.SetNthControlPointLabel(tableItem.row(), tableItem.text())
 
+    if tableItem.text():
+      if self.generateWorksheetsCheckBox.isChecked():
+        self.onGenerateWorksheet()
+
+  def worksheetCheckboxState(self, state):
+    if state == qt.Qt.Checked:
+      self.onGenerateWorksheet()
+    else:
+      pass
+
   def onGenerateWorksheet(self):
     try:
       from reportlab.pdfgen import canvas
@@ -1753,7 +1824,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       from PyPDF2 import PdfWriter, PdfReader, generic
 
     from io import BytesIO
-    import subprocess
 
     if not self.templateWorksheetPath or not self.templateWorksheetOverlayPath:
       return
@@ -1790,9 +1860,18 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         can = canvas.Canvas(packet, pagesize=letter)       
 
         rowIndex = sheetIndex * 2
-        targetName = self.targetListTableWidget.item(rowIndex, 0).text()
-        targetGrid = self.targetListTableWidget.item(rowIndex, 1).text()
-        targetDepth = self.targetListTableWidget.item(rowIndex, 2).text()
+        targetNameItem = self.targetListTableWidget.item(rowIndex, 0)
+        if not targetNameItem:
+          return
+        targetName = targetNameItem.text()
+        targetGridItem = self.targetListTableWidget.item(rowIndex, 1)
+        if not targetGridItem:
+          return
+        targetGrid = targetGridItem.text()
+        targetDepthItem = self.targetListTableWidget.item(rowIndex, 2)
+        if not targetDepthItem:
+          return
+        targetDepth = targetDepthItem.text()
         
         writer.update_page_form_field_values(page, {f'TARGET_{rowIndex+1}': targetName})
         writer.update_page_form_field_values(page, {f'GRID_{rowIndex+1}': targetGrid})
@@ -1818,9 +1897,18 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         
         rowIndex += 1
         if rowIndex < self.targetListTableWidget.rowCount:
-          targetName = self.targetListTableWidget.item(rowIndex, 0).text()
-          targetGrid = self.targetListTableWidget.item(rowIndex, 1).text()
-          targetDepth = self.targetListTableWidget.item(rowIndex, 2).text()
+          targetNameItem = self.targetListTableWidget.item(rowIndex, 0)
+          if not targetNameItem:
+            return
+          targetName = targetNameItem.text()
+          targetGridItem = self.targetListTableWidget.item(rowIndex, 1)
+          if not targetGridItem:
+            return
+          targetGrid = targetGridItem.text()
+          targetDepthItem = self.targetListTableWidget.item(rowIndex, 2)
+          if not targetDepthItem:
+            return
+          targetDepth = targetDepthItem.text()
 
           writer.update_page_form_field_values(page, {f'TARGET_{rowIndex+1}': targetName})
           writer.update_page_form_field_values(page, {f'GRID_{rowIndex+1}': targetGrid})
@@ -1850,9 +1938,65 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     with open(newWorksheetPath, "wb") as outputStream, open(newWorksheetOverlayPath, "wb") as outputStream_overlay:
       writer.write(outputStream)
       writer_overlay.write(outputStream_overlay)
+
+    self.openWorksheetButton.enabled = True
+    self.printWorksheetOverlayButton.enabled = True
+    self.printWorksheetButton.enabled = True
     
+  def onOpenWorksheet(self):
+    import subprocess
+    newWorksheetPath = f'{self.caseDirPath}/BiopsyWorksheet_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
     #os.startfile(newWorksheetPath)
-    subprocess.Popen(['start', newWorksheetPath], shell=True)
+    try:
+      subprocess.Popen(['start', newWorksheetPath], shell=True)
+    except:
+      print("Failed to open worksheet")
+
+  def printDocument(self, filePath):
+    import subprocess
+
+    # # Try to disable scaling
+    # if os.name == 'nt' or (not self.printerSelectionBox):
+    #   try:
+    #     import win32print
+    #     import win32con
+    #   except:
+    #     slicer.util.pip_install('pypiwin32')
+    #     import win32print
+    #     import win32con
+
+    #   handle = win32print.OpenPrinter(self.printerSelectionBox.currentText, {"DesiredAccess":win32print.PRINTER_ALL_ACCESS})
+
+    #   # Get the default properties for the printer
+    #   properties = win32print.GetPrinter(handle, 2)
+    #   devmode = properties['pDevMode']
+
+    #   # Set the paper size
+    #   devmode.PaperSize = win32con.DMPAPER_LETTER # Desired paper size https://support.microsoft.com/en-us/office/prtdevmode-property-f87eebdc-a13e-484a-83ed-2e2beeb9d699
+    #   devmode.Scale = 100 # Int/100; No scaling
+
+    #   # Update the printer properties
+    #   properties['pDevMode'] = devmode
+    #   win32print.SetPrinter(handle, 2, properties, 0)
+
+    # Call Foxit Reader to handle printing because the alternative is madness
+    if os.name == 'nt' and self.printerSelectionBox:
+      try:
+        command = f'"{self.foxitReaderPath}" /p "{filePath}" "{self.printerSelectionBox.currentText}"'
+        subprocess.run(command, shell=True)
+      except:
+        print("Failed to print worksheet")
+    else:
+      print("Print functionality currently only available on Windows")
+
+  def onPrintWorksheet(self):
+    newWorksheetPath = f'{self.caseDirPath}/BiopsyWorksheet_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
+    self.printDocument(newWorksheetPath)
+
+  def onPrintWorksheetOverlay(self):
+    newWorksheetOverlayPath =f'{self.caseDirPath}/BiopsyWorksheetOverlay_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
+    self.printDocument(newWorksheetOverlayPath)
+
 
   # ------------------------------------- Footer -----------------------------------
     
