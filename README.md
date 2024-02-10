@@ -57,7 +57,7 @@ Click the Save and Close Case button to save the 3D Slicer data in the case dire
 
 ### Disclaimer
 
-** This is NOT an FDA-approved medical device**. It is not intended for clinical use. The user assumes full responsibility to comply with the appropriate regulations.  
+**This is NOT an FDA-approved medical device**. It is not intended for clinical use. The user assumes full responsibility to comply with the appropriate regulations.  
 
 
 ### Acknowledgments
