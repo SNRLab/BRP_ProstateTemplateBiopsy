@@ -357,7 +357,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.targetListTableWidget.itemChanged.connect(self.onTargetListItemChanged)
     self.targetListTableWidget.cellClicked.connect(self.onTargetTableItemClicked)
 
-    # # To avoid confusion, and as long as the computer can handle it, changed to just always update worksheet
+    # # To avoid confusion, just generate when either opening or printing.
     # generateWorksheetFont = qt.QFont()
     # generateWorksheetFont.setPointSize(14)
     # generateWorksheetFont.setBold(False)
@@ -379,14 +379,14 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.openWorksheetButton = qt.QPushButton("Open Worksheet")
     self.openWorksheetButton.setFont(worksheetFont)
     self.openWorksheetButton.toolTip = "Open PDF for worksheet"
-    self.openWorksheetButton.enabled = False
+    self.openWorksheetButton.enabled = True
     self.openWorksheetButton.connect('clicked()', self.onOpenWorksheet)
     worksheetLayout.addWidget(self.openWorksheetButton)
 
     self.printWorksheetOverlayButton = qt.QPushButton("Print Overlay")
     self.printWorksheetOverlayButton.setFont(worksheetFont)
     self.printWorksheetOverlayButton.toolTip = "Print PDF for worksheet"
-    self.printWorksheetOverlayButton.enabled = False
+    self.printWorksheetOverlayButton.enabled = True
     self.printWorksheetOverlayButton.connect('clicked()', self.onPrintWorksheetOverlay)
     if config['PLANNING'].getboolean('print_overlay_button'):
       worksheetLayout.addWidget(self.printWorksheetOverlayButton)
@@ -394,7 +394,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.printWorksheetButton = qt.QPushButton("Print Worksheet")
     self.printWorksheetButton.setFont(worksheetFont)
     self.printWorksheetButton.toolTip = "Print PDF for worksheet"
-    self.printWorksheetButton.enabled = False
+    self.printWorksheetButton.enabled = True
     self.printWorksheetButton.connect('clicked()', self.onPrintWorksheet)
     worksheetLayout.addWidget(self.printWorksheetButton)
 
@@ -418,11 +418,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       planningLayout.addRow("Printer: ", self.printerSelectionBox)
 
       self.foxitReaderPath = config['PLANNING'].get('foxit_reader_path')
-    
-    self.generateWorksheetsCheckBox = qt.QCheckBox("Generate Worksheets")
-    self.generateWorksheetsCheckBox.setChecked(config['PLANNING'].getboolean('generate_worksheets'))
-    self.generateWorksheetsCheckBox.stateChanged.connect(self.worksheetCheckboxState)
-    planningLayout.addRow(self.generateWorksheetsCheckBox)
     # -------------------------------------- ----------  --------------------------------------
     line = qt.QFrame()
     line.setFrameShape(qt.QFrame.HLine)
@@ -1620,9 +1615,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
           for slice in ['Yellow', 'Green', 'Red']:
             sliceNode = lm.sliceWidget(slice).mrmlSliceNode()
             sliceNode.JumpSliceByOffsetting(newTargetRASList[i][0], newTargetRASList[i][1], newTargetRASList[i][2]) 
-      
-      if self.generateWorksheetsCheckBox.isChecked():
-        self.onGenerateWorksheet()
 
   def onTargetAdded(self, caller, event):
     if caller != self.biopsyFiducialListNode:
@@ -1681,9 +1673,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
 
     self.targetListTableWidget.scrollToBottom()
 
-    if self.generateWorksheetsCheckBox.isChecked():
-      self.onGenerateWorksheet()
-
   def onTargetTableItemClicked(self, row, column):
     targetRAS = [float(i) for i in ast.literal_eval(self.targetListTableWidget.item(row,3).text())]
     lm = slicer.app.layoutManager()
@@ -1705,9 +1694,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         shNode.GetItemChildren(trajectoryFolderItemID, trajectoryChildren)
         shNode.RemoveItem(shNode.GetItemByPositionUnderParent(trajectoryFolderItemID,index))
         break
-      
-    if self.generateWorksheetsCheckBox.isChecked():
-      self.onGenerateWorksheet()
 
   def calculateGridCoordinates(self, index):
     fiducialNode = self.biopsyFiducialListNode
@@ -1798,15 +1784,6 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       return
     self.biopsyFiducialListNode.SetNthControlPointLabel(tableItem.row(), tableItem.text())
 
-    if tableItem.text():
-      if self.generateWorksheetsCheckBox.isChecked():
-        self.onGenerateWorksheet()
-
-  def worksheetCheckboxState(self, state):
-    if state == qt.Qt.Checked:
-      self.onGenerateWorksheet()
-    else:
-      pass
 
   def onGenerateWorksheet(self):
     try:
@@ -1939,18 +1916,16 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       writer.write(outputStream)
       writer_overlay.write(outputStream_overlay)
 
-    self.openWorksheetButton.enabled = True
-    self.printWorksheetOverlayButton.enabled = True
-    self.printWorksheetButton.enabled = True
+    return True
     
   def onOpenWorksheet(self):
-    import subprocess
-    newWorksheetPath = f'{self.caseDirPath}/BiopsyWorksheet_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
-    #os.startfile(newWorksheetPath)
-    try:
-      subprocess.Popen(['start', newWorksheetPath], shell=True)
-    except:
-      print("Failed to open worksheet")
+    if self.onGenerateWorksheet():
+      import subprocess
+      newWorksheetPath = f'{self.caseDirPath}/BiopsyWorksheet_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
+      try:
+        subprocess.Popen(['start', newWorksheetPath], shell=True)
+      except:
+        print("Failed to open worksheet")
 
   def printDocument(self, filePath):
     import subprocess
@@ -1990,12 +1965,14 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       print("Print functionality currently only available on Windows")
 
   def onPrintWorksheet(self):
-    newWorksheetPath = f'{self.caseDirPath}/BiopsyWorksheet_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
-    self.printDocument(newWorksheetPath)
+    if self.onGenerateWorksheet():
+      newWorksheetPath = f'{self.caseDirPath}/BiopsyWorksheet_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
+      self.printDocument(newWorksheetPath)
 
   def onPrintWorksheetOverlay(self):
-    newWorksheetOverlayPath =f'{self.caseDirPath}/BiopsyWorksheetOverlay_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
-    self.printDocument(newWorksheetOverlayPath)
+    if self.onGenerateWorksheet():
+      newWorksheetOverlayPath =f'{self.caseDirPath}/BiopsyWorksheetOverlay_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
+      self.printDocument(newWorksheetOverlayPath)
 
 
   # ------------------------------------- Footer -----------------------------------
