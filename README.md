@@ -49,9 +49,9 @@ Double click on a Slice View to expand it if desired and double click again to s
 
 ![](Screenshots/Usage_Tools.png)
 
-Worksheets are constantly generated so long as the Generate Worksheets check box is checked. When unchecked, the worksheet will stop updating. Click on the Open Worksheet button to display the Template Worksheet and the Print Worksheet button to print it (only available in Windows). There is currently a limit of 24 targets (12 pages) that can be added to template worksheets.
+Click on the Open Worksheet button to display the Template Worksheet and the Print Worksheet button to print it (only available in Windows). There is currently a limit of 24 targets (12 pages) that can be added to template worksheets.
 
-At this point, any further images will be saved in the 3D Slicer scene but will not affect the function of the module.
+At this point, any further images added to the scene will be saved in the 3D Slicer scene but will not affect the function of the module.
 
 Click the Save and Close Case button to save the 3D Slicer data in the case directory and refresh the module to prepare for the next case. DICOM images along with the targets and scene will be saved in an .MRB file.
 
