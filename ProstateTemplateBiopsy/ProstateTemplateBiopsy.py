@@ -578,13 +578,12 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.caseDirLabel.text = self.caseDirPath
 
     slicer.util.selectModule('DICOM')
-    slicer.util.selectModule('ProstateTemplateBiopsy')
-
     # Set DICOM Database
     slicer.modules.DICOMWidget.updateDatabaseDirectoryFromWidget(self.caseDirPath)
-
-    # Start Listener and Observation Timer
+    # Start Listener
     slicer.modules.DICOMWidget.onToggleListener(True)
+    
+    slicer.util.selectModule('ProstateTemplateBiopsy')
     self.observationTimer.start()
 
     self.initializeButton.enabled = False
