@@ -1922,10 +1922,24 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     if self.onGenerateWorksheet():
       import subprocess
       newWorksheetPath = f'{self.caseDirPath}/BiopsyWorksheet_{os.path.basename(os.path.normpath(self.caseDirPath))}.pdf'
-      try:
-        subprocess.Popen(['start', newWorksheetPath], shell=True)
-      except:
-        print("Failed to open worksheet")
+      if os.name == 'nt': # Windows
+        try:
+          subprocess.Popen(['start', newWorksheetPath], shell=True)
+        except:
+          print("Failed to open worksheet")
+      elif os.name == 'posix': # Mac / Linux
+        if 'darwin' in os.uname().sysname.lower():
+          try:
+            subprocess.Popen(['open', newWorksheetPath], shell=True)
+          except:
+            print("Failed to open worksheet")
+        else:
+          try:
+            subprocess.Popen(['xdg-open', newWorksheetPath], shell=True)
+          except:
+            print("Failed to open worksheet")
+      else:
+        print("OS not recognized")
 
   def printDocument(self, filePath):
     import subprocess
