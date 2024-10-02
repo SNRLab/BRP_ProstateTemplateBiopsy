@@ -894,7 +894,12 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.validRegistrationLabel.setStyleSheet("QLabel {background-color: #660000}")
   
   def onUseManualRegistration(self):
+    print("Manual Registration Accepted")
+
     self.validRegistration = True
+    self.validRegistrationLabel.text= "Manual Registration"
+    self.validRegistrationLabel.setStyleSheet("QLabel {background-color: #8fce00}")
+
     if self.getNodeFromImageRole("PLANNING"):
       self.onPhaseChange("PLANNING")
   
@@ -1100,7 +1105,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       self.calibratorModelNode.SetName(CALIBRATOR_MODEL_NAME)
       modelDisplayNode = self.calibratorModelNode.GetDisplayNode()
       modelDisplayNode.SetColor(1.0,1.0,0.0)
-      modelDisplayNode.SetOpacity(0.15)
+      modelDisplayNode.SetOpacity(0.05)
       modelDisplayNode.SetSliceIntersectionOpacity(0.25)
       self.calibratorModelNode.SetDisplayVisibility(True)
 
