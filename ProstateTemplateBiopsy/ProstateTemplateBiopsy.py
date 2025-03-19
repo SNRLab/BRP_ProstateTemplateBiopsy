@@ -35,6 +35,9 @@ from SlicerDevelopmentToolboxUtils.exceptions import DICOMValueError, UnknownSer
 from SlicerDevelopmentToolboxUtils.module.session import StepBasedSession
 from DICOMLib import DICOMUtils
 
+# For ZFrameRegistration
+import ZFrameRegistrationScripted
+
 class ProstateTemplateBiopsy(ScriptedLoadableModule):
   def __init__(self, parent):
     ScriptedLoadableModule.__init__(self, parent)
@@ -227,7 +230,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     registrationLayout.addRow(self.validRegistrationLabel)
 
     self.configFileSelectionBox = qt.QComboBox()
-    self.configFileSelectionBox.addItems(['Template 001 - Seven Fiducials', 'Template 002 - Nine Fiducials', 'Template 003 - BRP Robot - Nine Fiducials', 'Template 004 - Wide Z-frame - Seven Fiducials'])
+    self.configFileSelectionBox.addItems(['Template 001 - Seven Fiducials', 'Template 002 - Nine Fiducials', 'Template 003 - BRP Robot - Nine Fiducials', 'Template 004 - Wide Z-frame - Seven Fiducials', 'Template 005 - Integrated Z-frame - Seven Fiducials'])
     self.configFileSelectionBox.setCurrentIndex(config['REGISTRATION'].getint('template_index'))
     registrationLayout.addRow('Template Configuration:', self.configFileSelectionBox)
 
@@ -772,13 +775,19 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
           self.cropVolume(zFrameMaskedVolume, 256, 256)
         
         centerOfMassSlice = int(self.findCentroidOfVolume(zFrameMaskedVolume)[2])
-        # Run zFrameRegistration CLI module
-        params = {'inputVolume': zFrameMaskedVolume, 'startSlice': centerOfMassSlice-3, 'endSlice': centerOfMassSlice+3,
-                  'outputTransform': outputTransform, 'zframeConfig': self.zframeConfig, 'frameTopology': self.frameTopologyString, 
-                  'zFrameFids': ''}
-        cliNode = slicer.cli.run(slicer.modules.zframeregistration, None, params, wait_for_completion=True)
-        if cliNode.GetStatus() & cliNode.ErrorsMask:
-          print(cliNode.GetErrorText())
+
+        # # Run zFrameRegistration CLI module
+        # params = {'inputVolume': zFrameMaskedVolume, 'startSlice': centerOfMassSlice-3, 'endSlice': centerOfMassSlice+3,
+        #           'outputTransform': outputTransform, 'zframeConfig': self.zframeConfig, 'frameTopology': self.frameTopologyString, 
+        #           'zFrameFids': ''}
+        # cliNode = slicer.cli.run(slicer.modules.zframeregistration, None, params, wait_for_completion=True)
+        # if cliNode.GetStatus() & cliNode.ErrorsMask:
+        #   print(cliNode.GetErrorText())
+        
+        # Run zFrameRegistration Scripted module
+        registrationLogic = ZFrameRegistrationScripted.ZFrameRegistrationScriptedLogic()
+        registrationLogic.run(zFrameMaskedVolume, outputTransform, self.zframeConfig, f'{len(self.zFrameFiducials)}-fiducial', self.frameTopologyString, centerOfMassSlice-3, centerOfMassSlice+3)
+
         if self.removeOrientationCheckBox.isChecked():
           self.removeOrientationComponent(outputTransform)
       else:
@@ -925,6 +934,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       # Check if point is in extent of volume
       extent = fiducialImageData.GetExtent()
       if not (extent[0] <= ijkMidpoint[0] <= extent[1] and extent[2] <= ijkMidpoint[1] <= extent[3] and extent[4] <= ijkMidpoint[2] <= extent[5]):
+        print("Fiducial not in extent")
         return False
       # Check point and surrounding points
       fiducialFound = False
@@ -936,6 +946,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       if fiducialImageData.GetScalarComponentAsDouble(int(ijkMidpoint[0]), int(ijkMidpoint[1]), int(ijkMidpoint[2])-2, 0) > 0: fiducialFound = True
       if fiducialImageData.GetScalarComponentAsDouble(int(ijkMidpoint[0]), int(ijkMidpoint[1]), int(ijkMidpoint[2])+2, 0) > 0: fiducialFound = True
       if not fiducialFound:
+        print("Fiducial not found")
         return False
     return True
 
@@ -992,7 +1003,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       self.templateWorksheetOverlayPath = 'template003/BiopsyWorksheet_003_Overlay.pdf'
       self.zframeConfig = 'z003'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template003/zframe003.txt")
-    else: #self.configFileSelectionBox.currentIndex == 3:
+    elif self.configFileSelectionBox.currentIndex == 3:
       ZFRAME_MODEL_PATH = 'template004/zframe004-model.vtk'
       TEMPLATE_MODEL_PATH = 'template004/template004.vtk'
       CALIBRATOR_MODEL_PATH = 'template004/template004-Calibrator.vtk'
@@ -1002,6 +1013,16 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       self.templateWorksheetOverlayPath = 'template004/BiopsyWorksheet_004_Overlay.pdf'
       self.zframeConfig = 'z004'
       zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template004/zframe004.txt")
+    elif self.configFileSelectionBox.currentIndex == 4:
+      ZFRAME_MODEL_PATH = 'template005/zframe005-model.vtk'
+      TEMPLATE_MODEL_PATH = 'template005/template005.vtk'
+      CALIBRATOR_MODEL_PATH = 'template005/template005-Calibrator.vtk'
+      GUIDEHOLES_MODEL_PATH = 'template005/template005-GuideHoles.vtk'
+      GUIDEHOLELABELS_MODEL_PATH = 'template005/template005-GuideHoleLabels.vtk'
+      self.templateWorksheetPath = 'template005/BiopsyWorksheet_005.pdf'
+      self.templateWorksheetOverlayPath = 'template005/BiopsyWorksheet_005_Overlay.pdf'
+      self.zframeConfig = 'z005'
+      zframeConfigFilePath = os.path.join(currentFilePath, "Resources/Templates/template005/zframe005.txt")      
     
     with open(zframeConfigFilePath,"r") as f:
       configFileLines = f.readlines()
@@ -1013,6 +1034,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.templateHorizontalLabels = []
     self.templateVerticalLabels = []
     self.worksheetOrigin = []
+    
     templateOriginFound = False
     for line in configFileLines:
       if line.startswith('Side 1') or line.startswith('Side 2'): 
@@ -1023,7 +1045,13 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         vec = [float(s) for s in re.findall(r'-?\d+\.?\d*', line)]
         self.frameTopology.append(vec)
       elif line.startswith('Fiducial'):
-        vec = [float(s) for s in re.findall(r'(-?\d+)(?!:)', line)]
+        coords_str = line.split(': ')[1].strip('()\n').replace(' ', '')
+        point1_str, point2_str = coords_str.split('),(')
+        # Convert each coordinate string to floats
+        point1 = [float(x) for x in point1_str.split(',')]
+        point2 = [float(x) for x in point2_str.split(',')]
+        # Combine into single vector
+        vec = point1 + point2
         self.zFrameFiducials.append(vec)
       elif line.startswith('Template origin'):
         numbers = re.findall(r"[-+]?\d*\.\d+|\d+", line)
@@ -1053,13 +1081,16 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       elif line.startswith('Grid coordinate order'):
         matches = re.findall(r'\(([^)]+)', line)
         self.worksheetCoordinateOrder = [word.strip() for word in matches[0].split(',')]
-      
+    
     if not templateOriginFound:
       raise Exception("ZFrame configuration file is missing template origin")
 
     # Convert frameTopology points to a string, for the sake of passing it as a string argument to the ZframeRegistration CLI 
-    self.frameTopologyString = ' '.join([str(elem) for elem in self.frameTopology])
+    self.frameTopologyString = ', '.join([str(elem) for elem in self.frameTopology])
     
+    print(f'Frame Topology: {self.frameTopologyString}')
+    print(f'ZFrame Fiducials: {self.zFrameFiducials}')
+
     self.loadTemplateModels(ZFRAME_MODEL_PATH,'ZFrameModel',TEMPLATE_MODEL_PATH,'TemplateModel',CALIBRATOR_MODEL_PATH,'CalibratorModel',GUIDEHOLES_MODEL_PATH,'GuideHolesModel',GUIDEHOLELABELS_MODEL_PATH,'GuideHoleLabelsModel')
 
   def loadTemplateModels(self, ZFRAME_MODEL_PATH, ZFRAME_MODEL_NAME, TEMPLATE_MODEL_PATH, TEMPLATE_MODEL_NAME, CALIBRATOR_MODEL_PATH, CALIBRATOR_MODEL_NAME, GUIDEHOLES_MODEL_PATH, GUIDEHOLES_MODEL_NAME,  GUIDEHOLELABELS_MODEL_PATH, GUIDEHOLELABELS_MODEL_NAME):
@@ -1947,31 +1978,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
 
   def printDocument(self, filePath):
     import subprocess
-
-    # # Try to disable scaling
-    # if os.name == 'nt' or (not self.printerSelectionBox):
-    #   try:
-    #     import win32print
-    #     import win32con
-    #   except:
-    #     slicer.util.pip_install('pypiwin32')
-    #     import win32print
-    #     import win32con
-
-    #   handle = win32print.OpenPrinter(self.printerSelectionBox.currentText, {"DesiredAccess":win32print.PRINTER_ALL_ACCESS})
-
-    #   # Get the default properties for the printer
-    #   properties = win32print.GetPrinter(handle, 2)
-    #   devmode = properties['pDevMode']
-
-    #   # Set the paper size
-    #   devmode.PaperSize = win32con.DMPAPER_LETTER # Desired paper size https://support.microsoft.com/en-us/office/prtdevmode-property-f87eebdc-a13e-484a-83ed-2e2beeb9d699
-    #   devmode.Scale = 100 # Int/100; No scaling
-
-    #   # Update the printer properties
-    #   properties['pDevMode'] = devmode
-    #   win32print.SetPrinter(handle, 2, properties, 0)
-
+    
     # Call Foxit Reader to handle printing because the alternative is madness
     if os.name == 'nt' and self.printerSelectionBox:
       try:
@@ -2008,6 +2015,20 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     if self.nodeAddedObserver: slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
     if self.fiducialAddedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialAddedObserver)
     if self.fiducialModifiedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialModifiedObserver)
+
+    # Rename all volume nodes over 43 characters long otherwise it will fail to save
+    for node in slicer.mrmlScene.GetNodes():
+      if node.GetClassName() == "vtkMRMLScalarVolumeNode":
+        if len(node.GetName()) > 41:
+          newName = node.GetName()[:41]
+          print(f"Renaming {node.GetName()} to {newName}")
+          node.SetName(newName)
+          oldStorageNode = node.GetStorageNode()
+          if oldStorageNode:
+            slicer.mrmlScene.RemoveNode(oldStorageNode)
+          node.AddDefaultStorageNode()
+
+    slicer.app.processEvents()
 
     sceneSaveFilename = f'{self.caseDirPath}/saved-scene-{time.strftime("%Y%m%d-%H%M%S")}.mrb'
     if slicer.util.saveScene(sceneSaveFilename):
