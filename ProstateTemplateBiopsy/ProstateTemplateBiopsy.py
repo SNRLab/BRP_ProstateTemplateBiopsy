@@ -449,7 +449,18 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     rulerButton.setIcon(rulerIcon)
     rulerButton.toolTip = "Add ruler"
     rulerButton.connect('clicked()', self.addRuler)
-    footerLayout.addWidget(rulerButton, 0, 7, 1, 1)
+    footerLayout.addWidget(rulerButton, 0, 6, 1, 1)
+
+    self.toggleTrajectoryButton = qt.QPushButton("")
+    self.toggleTrajectoryButton.setMaximumWidth(50)
+    trajectoryIconPath = os.path.join(moduleDir, 'Resources/Icons', 'TrajectoryHole.png')
+    trajectoryIcon = qt.QIcon(trajectoryIconPath)
+    self.toggleTrajectoryButton.setIcon(trajectoryIcon)
+    self.toggleTrajectoryButton.toolTip = "Toggle target and trajectory visibility"
+    self.toggleTrajectoryButton.setCheckable(True)
+    self.toggleTrajectoryButton.setChecked(True)  # Default to visible
+    self.toggleTrajectoryButton.connect('clicked()', self.toggleTrajectories)
+    footerLayout.addWidget(self.toggleTrajectoryButton, 0, 7, 1, 1) 
 
     self.toggleGuideButton = qt.QPushButton("")
     self.toggleGuideButton.setMaximumWidth(50)
@@ -1137,7 +1148,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       modelDisplayNode = self.calibratorModelNode.GetDisplayNode()
       modelDisplayNode.SetColor(1.0,1.0,0.0)
       modelDisplayNode.SetOpacity(0.05)
-      modelDisplayNode.SetSliceIntersectionOpacity(0.25)
+      modelDisplayNode.SetSliceIntersectionOpacity(0.4)
       self.calibratorModelNode.SetDisplayVisibility(True)
 
     # Guide Holes
@@ -1778,6 +1789,10 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       modelNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelNode', modelName)
       modelNode.CreateDefaultDisplayNodes()
       modelNode.SetAndObserveTransformNodeID(self.ZFrameCalibrationTransformNode.GetID())
+      if self.toggleTrajectoryButton.isChecked():
+        modelNode.GetDisplayNode().SetVisibility2D(True)
+      else:
+        modelNode.GetDisplayNode().SetVisibility2D(False)  
       shNode.CreateItem(trajectoryFolderItemID, modelNode)
     childModelNode = shNode.GetItemDataNode(shNode.GetItemByPositionUnderParent(trajectoryFolderItemID, index))
     childModelNode.SetName(modelName)
@@ -1806,7 +1821,10 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     modelTransformFilter.Update()
 
     childModelNode.SetAndObservePolyData(modelTransformFilter.GetOutput())
-    childModelNode.GetDisplayNode().SetVisibility2D(True)
+    if self.toggleTrajectoryButton.isChecked():
+      childModelNode.GetDisplayNode().SetVisibility2D(True)
+    else:
+      childModelNode.GetDisplayNode().SetVisibility2D(False)  
     childModelNode.GetDisplayNode().SetSliceIntersectionOpacity(0.6)
     childModelNode.GetDisplayNode().SetSliceIntersectionThickness(2)
     childModelNode.GetDisplayNode().SetColor(1,0,1)
@@ -2065,6 +2083,30 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         self.guideHolesModelNode.GetDisplayNode().SetVisibility2D(False)
       if self.guideHoleLabelsModelNode:
         self.guideHoleLabelsModelNode.GetDisplayNode().SetVisibility2D(False)
+
+  def toggleTrajectories(self):
+    shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+    sceneItemID = shNode.GetSceneItemID()
+    trajectoryFolderItemID = shNode.GetItemChildWithName(sceneItemID, "TrajectoryModels")
+
+    # Toggle trajectory models
+    if trajectoryFolderItemID:
+      trajectoryChildren = vtk.vtkIdList()
+      shNode.GetItemChildren(trajectoryFolderItemID, trajectoryChildren)
+      for i in range(trajectoryChildren.GetNumberOfIds()):
+        modelNode = shNode.GetItemDataNode(trajectoryChildren.GetId(i))
+        if modelNode and modelNode.GetDisplayNode():
+          if self.toggleTrajectoryButton.isChecked():
+            modelNode.GetDisplayNode().SetVisibility2D(True)
+          else:
+            modelNode.GetDisplayNode().SetVisibility2D(False)  
+    
+    # Toggle target fiducials
+    if self.biopsyFiducialListNode and self.biopsyFiducialListNode.GetDisplayNode():
+      if self.toggleTrajectoryButton.isChecked():
+        self.biopsyFiducialListNode.GetDisplayNode().SetVisibility2D(True)
+      else:
+        self.biopsyFiducialListNode.GetDisplayNode().SetVisibility2D(False)
 
   def toggleWindowLevelMode(self):
     if self.toggleWindowLevelModeButton.isChecked():
