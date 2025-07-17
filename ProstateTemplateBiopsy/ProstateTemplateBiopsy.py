@@ -798,6 +798,10 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
         # Run zFrameRegistration Scripted module
         registrationLogic = ZFrameRegistrationScripted.ZFrameRegistrationScriptedLogic()
         registrationLogic.run(zFrameMaskedVolume, outputTransform, self.zframeConfig, f'{len(self.zFrameFiducials)}-fiducial', self.frameTopologyString, centerOfMassSlice-3, centerOfMassSlice+3)
+        # print(self.zframeConfig)
+        # print(f'{len(self.zFrameFiducials)}-fiducial')
+        # print(self.frameTopologyString)
+        # print(centerOfMassSlice)
 
         if self.removeOrientationCheckBox.isChecked():
           self.removeOrientationComponent(outputTransform)
@@ -842,13 +846,19 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
           self.cropVolume(zFrameMaskedVolume, 256, 256)
         
         centerOfMassSlice = int(self.findCentroidOfVolume(zFrameMaskedVolume)[2])
-        # Run zFrameRegistration CLI module
-        params = {'inputVolume': zFrameMaskedVolume, 'startSlice': centerOfMassSlice-3, 'endSlice': centerOfMassSlice+3,
-                  'outputTransform': outputTransform, 'zframeConfig': self.zframeConfig, 'frameTopology': self.frameTopologyString, 
-                  'zFrameFids': ''}
-        cliNode = slicer.cli.run(slicer.modules.zframeregistration, None, params, wait_for_completion=True)
-        if cliNode.GetStatus() & cliNode.ErrorsMask:
-          print(cliNode.GetErrorText())
+        
+        # # Run zFrameRegistration CLI module
+        # params = {'inputVolume': zFrameMaskedVolume, 'startSlice': centerOfMassSlice-3, 'endSlice': centerOfMassSlice+3,
+                  # 'outputTransform': outputTransform, 'zframeConfig': self.zframeConfig, 'frameTopology': self.frameTopologyString, 
+                  # 'zFrameFids': ''}
+        # cliNode = slicer.cli.run(slicer.modules.zframeregistration, None, params, wait_for_completion=True)
+        # if cliNode.GetStatus() & cliNode.ErrorsMask:
+          # print(cliNode.GetErrorText())
+          
+        # Run zFrameRegistration Scripted module
+        registrationLogic = ZFrameRegistrationScripted.ZFrameRegistrationScriptedLogic()
+        registrationLogic.run(zFrameMaskedVolume, outputTransform, self.zframeConfig, f'{len(self.zFrameFiducials)}-fiducial', self.frameTopologyString, centerOfMassSlice-3, centerOfMassSlice+3)          
+        
         if self.removeOrientationCheckBox.isChecked():
           self.removeOrientationComponent(outputTransform)
       else:
