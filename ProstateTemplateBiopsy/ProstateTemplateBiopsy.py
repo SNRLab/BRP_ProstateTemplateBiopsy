@@ -43,7 +43,7 @@ class ProstateTemplateBiopsy(ScriptedLoadableModule):
     ScriptedLoadableModule.__init__(self, parent)
     self.parent.title = "Prostate Template Biopsy"
     self.parent.categories = ["IGT"]
-    self.parent.dependencies = ["SlicerDevelopmentToolbox", "ZFrameRegistration"]
+    self.parent.dependencies = ["SlicerDevelopmentToolbox", "ZFrameRegistrationScripted"]
     self.parent.contributors = ["Franklin King (SNR)"]
     self.parent.helpText = """
     <a href=\"https://github.com/SNRLab/BRP_ProstateTemplateBiopsy">https://github.com/SNRLab/BRP_ProstateTemplateBiopsy</a>
