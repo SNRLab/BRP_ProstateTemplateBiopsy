@@ -2,7 +2,7 @@
 
 Designed for use with 3D Slicer 5.6.1 Stable Release. Download from http://download.slicer.org
 
-Specifically requires the ZFrameRegistration CLI module to be built from https://github.com/SNRLab/ZFrameRegistration-ProstateTemplateBiopsy
+Specifically requires the ZFrameRegistration Scripted module from [https://github.com/SNRLab/ZFrameRegistration-ProstateTemplateBiopsy/tree/master/ZFrameRegistrationScripted](https://github.com/SNRLab/ZFrameRegistration-ProstateTemplateBiopsy/tree/master/ZFrameRegistrationScripted)
 
 Requires SlicerDevelopmentToolbox. Download and install from the 3D Slicer Extensions Manager: https://slicer.readthedocs.io/en/latest/user_guide/extensions_manager.html
 
