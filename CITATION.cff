@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+type: software
+title: "BRP_ProstateTemplateBiopsy"
+abstract: >-
+  A 3D Slicer module for MRI-guided transperineal prostate template biopsy,
+  using ZFrame registration to plan targets and generate template worksheets.
+authors:
+  - given-names: Franklin
+    family-names: King
+    orcid: "https://orcid.org/0000-0003-4381-4242"
+    affiliation: "Brigham and Women's Hospital"
+repository-code: "https://github.com/SNRLab/BRP_ProstateTemplateBiopsy"
+license-url: "https://github.com/SNRLab/BRP_ProstateTemplateBiopsy/blob/main/License.txt"
+keywords:
+  - 3D Slicer
+  - prostate biopsy
+  - MRI-guided intervention
+  - image-guided therapy
