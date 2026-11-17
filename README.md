@@ -55,6 +55,16 @@ At this point, any further images added to the scene will be saved in the 3D Sli
 
 Click the Save and Close Case button to save the 3D Slicer data in the case directory and refresh the module to prepare for the next case. DICOM images along with the targets and scene will be saved in an .MRB file.
 
+### Template
+
+A template model for use with the software is included: /BRP_ProstateTemplateBiopsy/Template005_Model.stl
+
+![](Screenshots/Template005.png)
+
+The template was intended for use with [Beekley 3.0cm MR-SPOT Tube markers](https://beekley.com/mr-spot-skin-markers/soft-tissue-masses-and-larger-areas-of-concern).
+
+![](Screenshots/Template005_Markers.jpg)
+
 ### Disclaimer
 
 **This is NOT an FDA-approved medical device**. It is not intended for clinical use. The user assumes full responsibility to comply with the appropriate regulations.  
