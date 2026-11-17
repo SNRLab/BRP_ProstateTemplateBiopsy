@@ -59,7 +59,7 @@ Click the Save and Close Case button to save the 3D Slicer data in the case dire
 
 A template model for use with the software is included: /BRP_ProstateTemplateBiopsy/Template005_Model.stl
 
-![](Screenshots/Template005.png)
+![](Screenshots/Template005.jpg)
 
 The template was intended for use with [Beekley 3.0cm MR-SPOT Tube markers](https://beekley.com/mr-spot-skin-markers/soft-tissue-masses-and-larger-areas-of-concern).
 
