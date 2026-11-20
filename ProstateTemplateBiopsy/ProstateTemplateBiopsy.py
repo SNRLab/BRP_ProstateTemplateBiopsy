@@ -119,28 +119,31 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.filesToBeLoaded = []
     self.continueObserving = True
     self.observationTimer.stop()
-    if self.nodeAddedObserver: slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
-    if self.fiducialAddedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialAddedObserver)
-    if self.fiducialModifiedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialModifiedObserver)
+    self.removeObservers()
     self.manualRegistrationTransformSliders.setMRMLTransformNode(None)
     self.manualRegistrationTransformSliders.reset()
     self.manualRegistrationRotationSliders.setMRMLTransformNode(None)
     self.manualRegistrationRotationSliders.reset()
 
   def onReload(self,moduleName="ProstateTemplateBiopsy"):
-    self.seriesList = []
-    self.loadedFiles = []
-    self.filesToBeLoaded = []
-    self.continueObserving = True
-    self.observationTimer.stop()
-    if self.nodeAddedObserver: slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
-    if self.fiducialAddedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialAddedObserver)
-    if self.fiducialModifiedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialModifiedObserver)
-    self.manualRegistrationTransformSliders.setMRMLTransformNode(None)
-    self.manualRegistrationTransformSliders.reset()
-    self.manualRegistrationRotationSliders.setMRMLTransformNode(None)
-    self.manualRegistrationRotationSliders.reset()
-    globals()[moduleName] = slicer.util.reloadScriptedModule(moduleName)
+    self.cleanup()
+    # Do not assign the result to globals()[moduleName]: that would replace the
+    # ProstateTemplateBiopsy module class in this namespace with the Python module object.
+    slicer.util.reloadScriptedModule(moduleName)
+
+  def removeObservers(self):
+    # The scene observer is on the scene; the target observers are on the target list node.
+    # Observer IDs are cleared so this is safe to call more than once.
+    if self.nodeAddedObserver:
+      slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
+      self.nodeAddedObserver = None
+    if self.biopsyFiducialListNode:
+      if self.fiducialAddedObserver:
+        self.biopsyFiducialListNode.RemoveObserver(self.fiducialAddedObserver)
+      if self.fiducialModifiedObserver:
+        self.biopsyFiducialListNode.RemoveObserver(self.fiducialModifiedObserver)
+    self.fiducialAddedObserver = None
+    self.fiducialModifiedObserver = None
 
   def setup(self):
     ScriptedLoadableModuleWidget.setup(self)
@@ -2040,9 +2043,7 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
     self.continueObserving = True
     self.observationTimer.stop()
 
-    if self.nodeAddedObserver: slicer.mrmlScene.RemoveObserver(self.nodeAddedObserver)
-    if self.fiducialAddedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialAddedObserver)
-    if self.fiducialModifiedObserver: slicer.mrmlScene.RemoveObserver(self.fiducialModifiedObserver)
+    self.removeObservers()
 
     # Rename all volume nodes over 43 characters long otherwise it will fail to save
     for node in slicer.mrmlScene.GetNodes():
@@ -2129,4 +2130,348 @@ class ProstateTemplateBiopsyWidget(ScriptedLoadableModuleWidget):
       slicer.util.getNode("Crosshair").SetCrosshairMode(slicer.vtkMRMLCrosshairNode.ShowSmallIntersection)
     else:
       slicer.util.getNode("Crosshair").SetCrosshairMode(slicer.vtkMRMLCrosshairNode.NoCrosshair)
-      
+
+
+# ------------------------------------- Testing -----------------------------------
+
+class ProstateTemplateBiopsyTest(ScriptedLoadableModuleTest):
+  """
+  Tests for the Template 005 (integrated seven-fiducial Z-frame) workflow.
+
+  The registration test uses a Template 005 calibration image stored at
+  Testing/Data/Template005_Calibration.nrrd. Set the environment variable
+  PROSTATE_TEMPLATE_BIOPSY_TEST_DATA to the path of a different image to override it.
+  """
+
+  # Series description of the scan the test image came from. Contains "Template", which the
+  # module uses to auto-assign the CALIBRATION role.
+  CALIBRATION_SERIES_NAME = '13 Ax T2 - Cover Template'
+
+  # Values from Resources/Templates/template005/zframe005.txt
+  TEMPLATE005_ORIGIN = [40.0, 53.75, 7.769]
+  TEMPLATE005_HOLE_OFFSET = 5.0
+  TEMPLATE005_HORIZONTAL_LABELS = list('ABCDEFGHIJKLMNOPQ')
+  TEMPLATE005_VERTICAL_LABELS = [str(i) for i in range(1, 18)]
+
+  # Known-good Z-frame registration of Template005_Calibration.nrrd (default registration parameters)
+  EXPECTED_REGISTRATION = np.array([
+    [ 0.999736,   0.00215457,  0.0228860, -6.47760],
+    [ 0.0000900,  0.995223,   -0.0976263, -6.19997],
+    [-0.0229870,  0.0976025,   0.994960, -19.73671],
+    [ 0.0,        0.0,         0.0,        1.0],
+  ])
+  TRANSLATION_TOLERANCE_MM = 1.0
+  ROTATION_TOLERANCE_DEG = 1.0
+
+  def setUp(self):
+    slicer.mrmlScene.Clear(0)
+    # A fresh, standalone widget per test. A parent must be passed: without one the base class
+    # calls setup() before this widget's __init__ has created the nodes setup() depends on.
+    parent = slicer.qMRMLWidget()
+    parent.setLayout(qt.QVBoxLayout())
+    parent.setMRMLScene(slicer.mrmlScene)
+    self.widget = ProstateTemplateBiopsyWidget(parent)
+    self.widget.setup()
+    # Avoid timer-driven auto registration / phase changes during tests
+    self.widget.autoCheckBox.setChecked(False)
+    templateIndex = self.widget.configFileSelectionBox.findText('Template 005', qt.Qt.MatchStartsWith)
+    self.assertGreaterEqual(templateIndex, 0, "Template 005 is not listed in the template configuration box")
+    self.widget.configFileSelectionBox.setCurrentIndex(templateIndex)
+
+  def tearDown(self):
+    widget = self.widget
+    widget.cleanup()
+    # After cleanup() the widget must no longer react to new volumes or targets
+    imageRows = widget.imageListTableWidget.rowCount
+    targetRows = widget.targetListTableWidget.rowCount
+    slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "AfterCleanup Template")
+    widget.biopsyFiducialListNode.AddControlPoint(vtk.vtkVector3d(0, 0, 0), "AfterCleanup")
+    self.assertEqual(widget.imageListTableWidget.rowCount, imageRows, "Scene observer still active after cleanup()")
+    self.assertEqual(widget.targetListTableWidget.rowCount, targetRows, "Target observer still active after cleanup()")
+    widget.cleanup()  # Must be safe to call twice
+    widget.parent.deleteLater()
+    self.widget = None
+    slicer.mrmlScene.Clear(0)
+
+  def runTest(self):
+    tests = [
+      self.test_Template005ConfigurationParsing,
+      self.test_Template005ModelsLoaded,
+      self.test_Template005GridCoordinatesIdentity,
+      self.test_Template005GridCoordinatesTransformed,
+      self.test_Template005Registration,
+    ]
+    # Run every test even if one fails, report each result, then summarize
+    import traceback
+    failedTests = []
+    for test in tests:
+      try:
+        self.setUp()
+        try:
+          test()
+        finally:
+          self.tearDown()
+        print(f'PASSED: {test.__name__}')
+      except Exception:
+        traceback.print_exc()
+        print(f'FAILED: {test.__name__}')
+        failedTests.append(test.__name__)
+
+    if failedTests:
+      raise AssertionError(f'{len(failedTests)} of {len(tests)} tests failed: {", ".join(failedTests)}')
+    self.delayDisplay(f'All {len(tests)} tests passed')
+
+  # ----------------------------------- Helpers -----------------------------------
+
+  def calibrationImagePath(self):
+    path = os.environ.get('PROSTATE_TEMPLATE_BIOPSY_TEST_DATA')
+    if not path:
+      moduleDir = os.path.dirname(slicer.util.modulePath(self.__module__))
+      path = os.path.join(moduleDir, 'Testing', 'Data', 'Template005_Calibration.nrrd')
+    self.assertTrue(os.path.isfile(path), f'Template 005 calibration image not found: {path}')
+    return path
+
+  def holeCenter(self, horizontalLabel, verticalLabel):
+    # Hole center in template (Z-frame) coordinates
+    x = self.TEMPLATE005_HORIZONTAL_LABELS.index(horizontalLabel)
+    y = self.TEMPLATE005_VERTICAL_LABELS.index(verticalLabel)
+    return [self.TEMPLATE005_ORIGIN[0] - x * self.TEMPLATE005_HOLE_OFFSET,
+            self.TEMPLATE005_ORIGIN[1] - y * self.TEMPLATE005_HOLE_OFFSET]
+
+  def templateToRAS(self, templatePoint):
+    matrix = vtk.vtkMatrix4x4()
+    self.widget.ZFrameCalibrationTransformNode.GetMatrixTransformToParent(matrix)
+    return list(matrix.MultiplyPoint(list(templatePoint) + [1])[:3])
+
+  def addTargetAtHole(self, name, horizontalLabel, verticalLabel, depthCm, offset=(0.0, 0.0)):
+    # Places a target in RAS that corresponds to a hole (optionally offset in-plane) at a given depth
+    hole = self.holeCenter(horizontalLabel, verticalLabel)
+    templatePoint = [hole[0] + offset[0], hole[1] + offset[1], self.TEMPLATE005_ORIGIN[2] + depthCm * 10]
+    ras = self.templateToRAS(templatePoint)
+    return self.widget.biopsyFiducialListNode.AddControlPoint(vtk.vtkVector3d(ras), name)
+
+  def assertTargetRow(self, row, name, grid, depthCm):
+    table = self.widget.targetListTableWidget
+    self.assertEqual(table.item(row, 0).text(), name)
+    self.assertEqual(table.item(row, 1).text(), grid)
+    self.assertEqual(table.item(row, 2).text(), f'{depthCm:.2f} cm')
+
+  def trajectoryModelNodes(self):
+    shNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+    folderItemID = shNode.GetItemChildWithName(shNode.GetSceneItemID(), "TrajectoryModels")
+    if not folderItemID:
+      return []
+    children = vtk.vtkIdList()
+    shNode.GetItemChildren(folderItemID, children)
+    return [shNode.GetItemDataNode(children.GetId(i)) for i in range(children.GetNumberOfIds())]
+
+  # ------------------------------------ Tests ------------------------------------
+
+  def test_Template005ConfigurationParsing(self):
+    self.delayDisplay("Template 005: configuration parsing")
+    widget = self.widget
+    widget.loadTemplateConfiguration()
+
+    self.assertEqual(widget.zframeConfig, 'z005')
+    self.assertEqual(widget.templateWorksheetPath, 'template005/BiopsyWorksheet_005.pdf')
+    self.assertEqual(widget.templateWorksheetOverlayPath, 'template005/BiopsyWorksheet_005_Overlay.pdf')
+
+    # Seven fiducials, each a (start, end) pair of 3D points
+    expectedFiducials = [
+      [60.5, -50, -50, 60.5, -50, 50],
+      [60.5, -50, 50, 60.5, 50, -50],
+      [60.5, 50, -50, 60.5, 50, 50],
+      [49.931, -50, -50, -49.931, -50, 50],
+      [-60.5, 50, -50, -60.5, 50, 50],
+      [-60.5, 50, 50, -60.5, -50, -50],  # Line is missing its closing parenthesis in zframe005.txt
+      [-60.5, -50, -50, -60.5, -50, 50],
+    ]
+    self.assertEqual(len(widget.zFrameFiducials), 7)
+    for actual, expected in zip(widget.zFrameFiducials, expectedFiducials):
+      np.testing.assert_allclose(actual, expected)
+
+    # Frame topology: Side 1 / Base / Side 2 origins, then Side 1 / Base / Side 2 diagonals
+    expectedTopology = [
+      [60.5, -50, 50],
+      [-49.931, -50, 50],
+      [-60.5, 50, 50],
+      [0, 1, -1],
+      [1, 0, -1],
+      [0, -1, -1],
+    ]
+    self.assertEqual(len(widget.frameTopology), 6)
+    for actual, expected in zip(widget.frameTopology, expectedTopology):
+      np.testing.assert_allclose(actual, expected)
+
+    # The topology string must round-trip through the parser used by ZFrameRegistrationScripted
+    topologyList = ''.join(widget.frameTopologyString.split()).strip("[]").split("],[")
+    parsedTopology = [[float(v) for v in item.split(",")] for item in topologyList]
+    np.testing.assert_allclose(parsedTopology, expectedTopology)
+
+    # Template grid
+    np.testing.assert_allclose(widget.templateOrigin, self.TEMPLATE005_ORIGIN)
+    self.assertEqual(widget.templateHorizontalOffset, 5.0)
+    self.assertEqual(widget.templateVerticalOffset, 5.0)
+    self.assertEqual(widget.templateHorizontalLabels, self.TEMPLATE005_HORIZONTAL_LABELS)
+    self.assertEqual(widget.templateVerticalLabels, self.TEMPLATE005_VERTICAL_LABELS)
+
+    # Worksheet layout
+    self.assertEqual(widget.worksheetOrigin, [[96.8, 627.12], [96.8, 311.76]])
+    self.assertEqual(widget.worksheetHorizontalOffset, 14.8)
+    self.assertEqual(widget.worksheetVerticalOffset, 14.8)
+    self.assertEqual(widget.worksheetCoordinateOrder, ['Horizontal', 'Vertical'])
+
+  def test_Template005ModelsLoaded(self):
+    self.delayDisplay("Template 005: model loading")
+    widget = self.widget
+    moduleDir = os.path.dirname(slicer.util.modulePath(widget.__module__))
+    templateDir = os.path.join(moduleDir, 'Resources', 'Templates')
+
+    widget.loadTemplateConfiguration()
+    for relativePath in [widget.templateWorksheetPath, widget.templateWorksheetOverlayPath]:
+      self.assertTrue(os.path.isfile(os.path.join(templateDir, relativePath)), f'Missing worksheet: {relativePath}')
+
+    # Loading twice must replace the models, not duplicate them
+    widget.loadTemplateConfiguration()
+
+    for nodeName, attributeName in [('ZFrameModel', 'zFrameModelNode'),
+                                    ('CalibratorModel', 'calibratorModelNode'),
+                                    ('GuideHolesModel', 'guideHolesModelNode'),
+                                    ('GuideHoleLabelsModel', 'guideHoleLabelsModelNode')]:
+      nodes = slicer.util.getNodes(nodeName, useLists=True).get(nodeName, [])
+      self.assertEqual(len(nodes), 1, f'Expected exactly one {nodeName} node')
+      modelNode = getattr(widget, attributeName)
+      self.assertIs(modelNode, nodes[0])
+      self.assertIsNotNone(modelNode.GetPolyData())
+      self.assertGreater(modelNode.GetPolyData().GetNumberOfPoints(), 0, f'{nodeName} has no geometry')
+      self.assertIsNotNone(modelNode.GetDisplayNode())
+
+  def test_Template005GridCoordinatesIdentity(self):
+    self.delayDisplay("Template 005: grid coordinates with identity registration")
+    widget = self.widget
+    widget.loadTemplateConfiguration()
+    widget.onIdentity()
+    widget.validRegistration = True
+
+    # Corners of the grid, an interior hole, and a target slightly off a hole center
+    self.addTargetAtHole('T1', 'A', '1', 5.0)
+    self.addTargetAtHole('T2', 'Q', '17', 2.5)
+    self.addTargetAtHole('T3', 'Q', '1', 0.0)
+    self.addTargetAtHole('T4', 'A', '17', 10.0)
+    self.addTargetAtHole('T5', 'C', '4', 7.25, offset=(2.0, -2.0))
+
+    table = widget.targetListTableWidget
+    self.assertEqual(table.rowCount, 5)
+    self.assertTargetRow(0, 'T1', 'A, 1', 5.0)
+    self.assertTargetRow(1, 'T2', 'Q, 17', 2.5)
+    self.assertTargetRow(2, 'T3', 'Q, 1', 0.0)
+    self.assertTargetRow(3, 'T4', 'A, 17', 10.0)
+    self.assertTargetRow(4, 'T5', 'C, 4', 7.25)
+
+    # Depth is measured from the template face in either direction
+    self.addTargetAtHole('T6', 'H', '9', -1.5)
+    self.assertTargetRow(5, 'T6', 'H, 9', 1.5)
+
+    # One trajectory per target, positioned on the closest hole and parented to the registration
+    trajectories = self.trajectoryModelNodes()
+    self.assertEqual(len(trajectories), 6)
+    for trajectory in trajectories:
+      self.assertEqual(trajectory.GetTransformNodeID(), widget.ZFrameCalibrationTransformNode.GetID())
+    bounds = [0] * 6
+    trajectories[4].GetPolyData().GetBounds(bounds)
+    hole = self.holeCenter('C', '4')
+    self.assertAlmostEqual((bounds[0] + bounds[1]) / 2, hole[0], places=3)
+    self.assertAlmostEqual((bounds[2] + bounds[3]) / 2, hole[1], places=3)
+
+    # Moving a target updates its grid coordinate and depth
+    hole = self.holeCenter('K', '12')
+    ras = self.templateToRAS([hole[0], hole[1], self.TEMPLATE005_ORIGIN[2] + 40])
+    widget.biopsyFiducialListNode.SetNthControlPointPosition(0, ras)
+    self.assertTargetRow(0, 'T1', 'K, 12', 4.0)
+
+    # Renaming a target in the table renames the control point
+    table.item(1, 0).setText('Renamed')
+    self.assertEqual(widget.biopsyFiducialListNode.GetNthControlPointLabel(1), 'Renamed')
+
+    # Deleting a target removes the row, the control point, and its trajectory
+    widget.onDeleteTarget(table.cellWidget(2, 4))
+    self.assertEqual(table.rowCount, 5)
+    self.assertEqual(widget.biopsyFiducialListNode.GetNumberOfControlPoints(), 5)
+    self.assertEqual(len(self.trajectoryModelNodes()), 5)
+    self.assertTargetRow(2, 'T4', 'A, 17', 10.0)
+
+  def test_Template005GridCoordinatesTransformed(self):
+    self.delayDisplay("Template 005: grid coordinates with a rotated and translated registration")
+    widget = self.widget
+    widget.loadTemplateConfiguration()
+    widget.validRegistration = True
+
+    transform = vtk.vtkTransform()
+    transform.Translate(12.0, -30.0, 45.0)
+    transform.RotateX(8.0)
+    transform.RotateY(-5.0)
+    transform.RotateZ(180.0)
+    widget.ZFrameCalibrationTransformNode.SetMatrixTransformToParent(transform.GetMatrix())
+
+    self.addTargetAtHole('T1', 'A', '1', 3.0)
+    self.addTargetAtHole('T2', 'I', '9', 6.5)
+    self.addTargetAtHole('T3', 'P', '3', 9.0, offset=(-1.5, 1.5))
+
+    self.assertTargetRow(0, 'T1', 'A, 1', 3.0)
+    self.assertTargetRow(1, 'T2', 'I, 9', 6.5)
+    self.assertTargetRow(2, 'T3', 'P, 3', 9.0)
+
+    # The table reports the target position in RAS
+    ras = [0, 0, 0]
+    widget.biopsyFiducialListNode.GetNthControlPointPosition(1, ras)
+    self.assertEqual(widget.targetListTableWidget.item(1, 3).text(), f'[{ras[0]:.2f}, {ras[1]:.2f}, {ras[2]:.2f}]')
+
+  def test_Template005Registration(self):
+    self.delayDisplay("Template 005: automatic Z-frame registration")
+    widget = self.widget
+
+    volumeNode = slicer.util.loadVolume(self.calibrationImagePath(), {'name': self.CALIBRATION_SERIES_NAME})
+    self.assertIsNotNone(volumeNode)
+
+    # The series is auto-assigned the CALIBRATION role from its name
+    self.assertEqual(widget.imageListTableWidget.rowCount, 1)
+    self.assertIs(widget.getNodeFromImageRole("CALIBRATION"), volumeNode)
+
+    widget.onRegister()
+
+    self.assertTrue(widget.validRegistration, "Template 005 registration failed")
+    self.assertEqual(widget.validRegistrationLabel.text, "Registration Successful")
+
+    # Compare against the known-good registration of the test image
+    registration = slicer.util.arrayFromTransformMatrix(widget.ZFrameCalibrationTransformNode)
+    translationError = np.linalg.norm(registration[:3, 3] - self.EXPECTED_REGISTRATION[:3, 3])
+    self.assertLess(translationError, self.TRANSLATION_TOLERANCE_MM,
+                    f'Registration translation is {translationError:.2f} mm from expected:\n{registration}')
+    relativeRotation = registration[:3, :3] @ self.EXPECTED_REGISTRATION[:3, :3].T
+    rotationErrorDeg = math.degrees(math.acos(np.clip((np.trace(relativeRotation) - 1) / 2, -1, 1)))
+    self.assertLess(rotationErrorDeg, self.ROTATION_TOLERANCE_DEG,
+                    f'Registration rotation is {rotationErrorDeg:.2f} degrees from expected:\n{registration}')
+
+    # All template models follow the registration
+    transformID = widget.ZFrameCalibrationTransformNode.GetID()
+    for modelNode in [widget.zFrameModelNode, widget.calibratorModelNode, widget.guideHolesModelNode, widget.guideHoleLabelsModelNode]:
+      self.assertEqual(modelNode.GetTransformNodeID(), transformID, f'{modelNode.GetName()} is not under the registration transform')
+
+    # Every fiducial midpoint maps onto a detected fiducial in the masked calibration volume
+    maskedVolume = slicer.mrmlScene.GetFirstNodeByName("MaskedCalibrationVolume")
+    self.assertIsNotNone(maskedVolume)
+    self.assertTrue(widget.checkRegistrationResult(widget.ZFrameCalibrationTransformNode, maskedVolume, widget.zFrameFiducials))
+
+    # A registration shifted well away from the frame must be rejected by the same check
+    shiftedMatrix = vtk.vtkMatrix4x4()
+    widget.ZFrameCalibrationTransformNode.GetMatrixTransformToParent(shiftedMatrix)
+    shiftedMatrix.SetElement(0, 3, shiftedMatrix.GetElement(0, 3) + 20.0)
+    shiftedTransform = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", "ShiftedZFrameTransform")
+    shiftedTransform.SetMatrixTransformToParent(shiftedMatrix)
+    self.assertFalse(widget.checkRegistrationResult(shiftedTransform, maskedVolume, widget.zFrameFiducials))
+
+    # End to end: a target placed at a hole of the registered template gets that hole's grid coordinate
+    self.addTargetAtHole('T1', 'I', '9', 5.0)
+    self.addTargetAtHole('T2', 'D', '14', 8.0)
+    self.assertTargetRow(0, 'T1', 'I, 9', 5.0)
+    self.assertTargetRow(1, 'T2', 'D, 14', 8.0)

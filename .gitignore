@@ -944,7 +944,8 @@ CMakeLists.txt.user
 CMakeCache.txt
 CMakeFiles
 CMakeScripts
-Testing
+# CTest output directory (in-source builds only; must not match module Testing/ folders)
+/Testing/
 Makefile
 cmake_install.cmake
 install_manifest.txt

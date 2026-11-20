@@ -11,6 +11,7 @@ authors:
     orcid: "https://orcid.org/0000-0003-4381-4242"
     affiliation: "Brigham and Women's Hospital"
 repository-code: "https://github.com/SNRLab/BRP_ProstateTemplateBiopsy"
+license: BSD-3-Clause
 license-url: "https://github.com/SNRLab/BRP_ProstateTemplateBiopsy/blob/main/License.txt"
 keywords:
   - 3D Slicer
